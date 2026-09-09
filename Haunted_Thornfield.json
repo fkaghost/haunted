@@ -1,0 +1,707 @@
+{
+ "SaveName": "Haunted \u2014 Thornfield Manor",
+ "EpochTime": 0,
+ "Date": "",
+ "VersionNumber": "",
+ "GameMode": "Haunted",
+ "GameType": "",
+ "GameComplexity": "",
+ "Tags": [],
+ "PlayingTime": [
+  30,
+  90
+ ],
+ "PlayerCounts": [
+  2,
+  6
+ ],
+ "Gravity": 0.5,
+ "PlayArea": 0.8,
+ "Table": "Table_Square",
+ "Sky": "Sky_Museum",
+ "Note": "Thornfield Manor - 10 searchable rooms plus the Foyer.",
+ "TabStates": {},
+ "MusicPlayer": {
+  "RepeatSong": false,
+  "PlaylistEntry": 0,
+  "CurrentAudioTitle": "",
+  "CurrentAudioURL": ""
+ },
+ "Grid": {
+  "Type": 0,
+  "Lines": false,
+  "Color": {
+   "r": 0,
+   "g": 0,
+   "b": 0
+  },
+  "Opacity": 0.75,
+  "ThickLines": false,
+  "Snapping": false,
+  "Offset": false,
+  "BothSnapping": false,
+  "xSize": 2,
+  "ySize": 2,
+  "PosOffset": {
+   "x": 0,
+   "y": 1,
+   "z": 0
+  }
+ },
+ "Lighting": {
+  "LightIntensity": 0.54,
+  "LightColor": {
+   "r": 1,
+   "g": 0.9804,
+   "b": 0.8902
+  },
+  "AmbientIntensity": 1.3,
+  "AmbientType": 0,
+  "AmbientSkyColor": {
+   "r": 0.5,
+   "g": 0.5,
+   "b": 0.5
+  },
+  "AmbientEquatorColor": {
+   "r": 0.5,
+   "g": 0.5,
+   "b": 0.5
+  },
+  "AmbientGroundColor": {
+   "r": 0.5,
+   "g": 0.5,
+   "b": 0.5
+  },
+  "ReflectionIntensity": 1.0,
+  "LutIndex": 0,
+  "LutContribution": 1.0
+ },
+ "Hands": {
+  "Enable": true,
+  "DisableUnused": false,
+  "Hiding": 0
+ },
+ "ComponentTags": {
+  "labels": [
+   {
+    "displayed": "KeyCard",
+    "normalized": "keycard"
+   }
+  ]
+ },
+ "Turns": {
+  "Enable": false,
+  "Type": 0,
+  "TurnOrder": [],
+  "Reverse": false,
+  "SkipEmpty": false,
+  "DisableInteractions": false,
+  "PassTurns": true,
+  "TurnColor": ""
+ },
+ "LuaScript": "--=============================================================\n--  HAUNTED  \u00b7  Thornfield Manor\n--  Global script \u2014 board alignment, key reshuffle, ghost sight,\n--  round tracking and killer removal.\n--\n--  On load this positions every scripting zone over its room by\n--  measuring the board, so the board can be moved, rotated in 90-degree\n--  steps or rescaled and the zones will follow. If anything drifts,\n--  click \"Align to board\" on the control block.\n--=============================================================\n\nBOARD_NICK   = \"Thornfield Manor\"\nCONTROL_NICK = \"Haunted Controls\"\n\nGRID = 20\n\n-- If the plan comes out mirrored front-to-back, flip this and re-align.\nROW0_IS_FAR = true\n\n-- Room rectangles in grid cells: c,r = top-left of the largest rectangle\n-- that fits inside the room; w,h = its size; cc,cr = the centre cell where\n-- that room's Key Card is dealt.\nROOMS = {\n    { id=\"Kitchen\", name=\"Kitchen\", c=15, r=15, w=5, h=5, cc=17, cr=17 },\n    { id=\"Guestroom\", name=\"Guestroom\", c=0, r=15, w=3, h=5, cc=1, cr=17 },\n    { id=\"Parlour\", name=\"Parlour\", c=0, r=0, w=4, h=6, cc=1, cr=2 },\n    { id=\"Library\", name=\"Library\", c=15, r=8, w=5, h=5, cc=17, cr=10 },\n    { id=\"Study\", name=\"Study\", c=6, r=0, w=4, h=5, cc=8, cr=2 },\n    { id=\"DiningRoom\", name=\"Dining Room\", c=10, r=14, w=2, h=6, cc=11, cr=17 },\n    { id=\"Conservatory\", name=\"Conservatory\", c=17, r=0, w=3, h=6, cc=18, cr=2 },\n    { id=\"Lounge\", name=\"Lounge\", c=5, r=15, w=3, h=5, cc=6, cr=17 },\n    { id=\"Ballroom\", name=\"Ballroom\", c=0, r=8, w=6, h=5, cc=2, cr=10 },\n    { id=\"Bedroom\", name=\"Bedroom\", c=12, r=0, w=3, h=6, cc=13, cr=2 },\n}\n\nFOYER = { id=\"Foyer\", name=\"Foyer\", c=8, r=8, w=4, h=5, cc=9, cr=10 }\n\nROOM_ORDER = {}\nfor i, v in ipairs(ROOMS) do ROOM_ORDER[i] = v.id end\n\n--=============================================================\n--  State\n--=============================================================\nzoneGUID     = {}      -- room id -> scripting zone GUID\nGHOSTS       = {}      -- player colour -> true\ncurrentRound = 1\nkillerBackOn = nil     -- round the killer returns on\n\nfunction onLoad(saved)\n    if saved and saved ~= \"\" then\n        local ok, s = pcall(function() return JSON.decode(saved) end)\n        if ok and s then\n            zoneGUID     = s.zoneGUID or {}\n            GHOSTS       = s.GHOSTS or {}\n            currentRound = s.currentRound or 1\n            killerBackOn = s.killerBackOn\n        end\n    end\n    Wait.time(function()\n        indexZones()\n        alignZones(true)\n        buildButtons()\n        broadcastToAll(\"Haunted ready. Controls are the panel at the top-left of your screen.\", {0.72,0.82,0.94})\n        broadcastToAll(\"Import your board image, then click Align to board.\", {0.62,0.72,0.84})\n    end, 1)\nend\n\nfunction onSave()\n    return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,\n                         currentRound=currentRound, killerBackOn=killerBackOn })\nend\n\nfunction findByNick(nick)\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName() == nick then return o end\n    end\n    return nil\nend\n\nfunction indexZones()\n    zoneGUID = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Scripting\" then\n            local n = o.getName()\n            for _, R in ipairs(ROOMS) do\n                if n == R.id then zoneGUID[R.id] = o.getGUID() end\n            end\n            if n == FOYER.id then zoneGUID[FOYER.id] = o.getGUID() end\n        end\n    end\nend\n\nfunction zoneOf(id)\n    local g = zoneGUID[id]\n    return g and getObjectFromGUID(g) or nil\nend\n\n--=============================================================\n--  Click plumbing\n--  Object buttons call back as (object, playerColour, altClick).\n--  Screen-panel buttons call back as (player, value, elementId).\n--  This works out who clicked either way.\n--=============================================================\nSEAT_COLOURS = {\n    White=true, Brown=true, Red=true, Orange=true, Yellow=true, Green=true,\n    Teal=true, Blue=true, Purple=true, Pink=true, Grey=true, Black=true\n}\n\nfunction clickerColour(a, b)\n    if type(b) == \"string\" and SEAT_COLOURS[b] then return b end\n    if type(a) == \"table\" or type(a) == \"userdata\" then\n        local ok, col = pcall(function() return a.color end)\n        if ok and type(col) == \"string\" and SEAT_COLOURS[col] then return col end\n    end\n    if type(b) == \"string\" and b ~= \"\" then return b end\n    return nil\nend\n\n--=============================================================\n--  Alignment \u2014 everything is derived from the board's own bounds,\n--  so no hand-typed coordinates and no guessing at TTS units.\n--=============================================================\nfunction cellToWorld(board, col, row)\n    local b  = board.getBounds()\n    local cw = b.size.x / GRID\n    local cd = b.size.z / GRID\n    local x  = b.center.x - b.size.x / 2 + (col + 0.5) * cw\n    local z\n    if ROW0_IS_FAR then\n        z = b.center.z + b.size.z / 2 - (row + 0.5) * cd\n    else\n        z = b.center.z - b.size.z / 2 + (row + 0.5) * cd\n    end\n    return { x = x, y = b.center.y + b.size.y / 2 + 0.2, z = z }, cw, cd\nend\n\n-- The TTS board mesh is not square, and until a real image loads there is no\n-- aspect ratio to derive one from. Measure the board and stretch it back to a\n-- square footprint so one grid cell is the same size along X and Z.\nfunction squareUpBoard(board)\n    local b = board.getBoundsNormalized()\n    local s = board.getScale()\n    if b.size.x <= 0.01 or b.size.z <= 0.01 or s.x <= 0 or s.z <= 0 then\n        broadcastToAll(\"Could not measure the board. Is the image imported?\", {1,0.6,0.2})\n        return false\n    end\n\n    local perX = b.size.x / s.x        -- world units per unit of scale\n    local perZ = b.size.z / s.z\n    if perX <= 0.001 or perZ <= 0.001 then return false end\n\n    local wantZ = b.size.x / perZ      -- keep the current width, match the depth to it\n    if wantZ <= 0 or wantZ > 1000 then\n        broadcastToAll(\"Board measurement looks wrong; leaving its size alone.\", {1,0.6,0.2})\n        return false\n    end\n    if math.abs(wantZ - s.z) < 0.005 then return false end\n\n    board.setLock(false)\n    board.setScale({ s.x, s.y, wantZ })\n    board.setLock(true)\n    return true\nend\n\n-- Prints what TTS actually reports, so a misbehaving board can be diagnosed\n-- instead of guessed at.\nfunction btnDiagnose()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'.\", {1,0.4,0.3})\n        return\n    end\n    local b  = board.getBounds()\n    local bn = board.getBoundsNormalized()\n    local s  = board.getScale()\n    indexZones()\n    local n = 0\n    for _ in pairs(zoneGUID) do n = n + 1 end\n\n    local L = {\n        \"--- BOARD ---\",\n        \"name       : \" .. tostring(board.getName()),\n        \"type       : \" .. tostring(board.type),\n        \"scale      : \" .. string.format(\"%.2f, %.2f, %.2f\", s.x, s.y, s.z),\n        \"bounds     : \" .. string.format(\"%.2f x %.2f x %.2f\", b.size.x, b.size.y, b.size.z),\n        \"normalised : \" .. string.format(\"%.2f x %.2f x %.2f\", bn.size.x, bn.size.y, bn.size.z),\n        \"square?    : \" .. (math.abs(bn.size.x - bn.size.z) < 0.05 and \"yes\" or \"NO\"),\n        \"cell size  : \" .. string.format(\"%.3f x %.3f\", b.size.x / GRID, b.size.z / GRID),\n        \"zones found: \" .. n .. \" of \" .. (#ROOMS + 1),\n    }\n    print(table.concat(L, \"\\n\"))\n    broadcastToAll(\"Board report printed to chat.\", {0.72,0.82,0.94})\nend\n\nfunction alignZones(quiet)\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'. Rename the board and align again.\", {1,0.4,0.3})\n        return\n    end\n\n    if squareUpBoard(board) then\n        if not quiet then\n            broadcastToAll(\"Board squared up.\", {0.7,0.85,1})\n        end\n        Wait.time(function() placeZones(board, quiet) end, 0.5)\n        return\n    end\n    placeZones(board, quiet)\nend\n\nfunction placeZones(board, quiet)\n    indexZones()\n\n    local all = {}\n    for _, R in ipairs(ROOMS) do all[#all+1] = R end\n    all[#all+1] = FOYER\n\n    local snaps, placed = {}, 0\n    for _, R in ipairs(all) do\n        local z = zoneOf(R.id)\n        local _, cw, cd = cellToWorld(board, 0, 0)\n        local pos = cellToWorld(board, R.c + R.w / 2 - 0.5, R.r + R.h / 2 - 0.5)\n        if z ~= nil then\n            z.setPosition(pos)\n            z.setRotation({0, 0, 0})\n            z.setScale({ cw * R.w, 3, cd * R.h })\n            placed = placed + 1\n        end\n        local sp = cellToWorld(board, R.cc, R.cr)\n        snaps[#snaps+1] = { position = sp, rotation = {0,0,0}, rotation_snap = true }\n    end\n\n    Global.setSnapPoints(snaps)\n\n    -- park the control block clear of the board's left edge, so it can never\n    -- end up hidden underneath a board that got scaled up\n    local ctrl = findByNick(CONTROL_NICK)\n    if ctrl ~= nil then\n        local b = board.getBounds()\n        ctrl.setLock(false)\n        ctrl.setPosition({ b.center.x - b.size.x / 2 - 3.5,\n                           b.center.y + b.size.y / 2 + 0.6,\n                           b.center.z })\n        ctrl.setRotation({0, 0, 0})\n        ctrl.setLock(true)\n    end\n\n    if not quiet then\n        broadcastToAll(placed .. \" of \" .. #all .. \" room zones aligned.\", {0.7,0.85,1})\n    end\n    if placed < #all then\n        broadcastToAll(\"Missing zones. Each scripting zone must be named exactly as its room.\", {1,0.7,0.3})\n    end\nend\n\n--=============================================================\n--  Keys \u2014 gather all ten, reshuffle, deal one face-down per room\n--=============================================================\nfunction keyCardsInPlay()\n    local found = {}\n    for _, R in ipairs(ROOMS) do\n        local z = zoneOf(R.id)\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then found[#found+1] = o end\n            end\n        end\n    end\n    return found\nend\n\nfunction btnReshuffleKeys()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then broadcastToAll(\"Board not found.\", {1,0.4,0.3}) return end\n\n    local cards = keyCardsInPlay()\n    if #cards == 0 then\n        broadcastToAll(\"No cards tagged KeyCard are sitting in the rooms.\", {1,0.7,0.3})\n        return\n    end\n\n    broadcastToAll(\"The house rearranges itself...\", {0.72,0.72,1})\n\n    -- stack them all on one spot so they merge into a deck\n    local drop = cellToWorld(board, FOYER.cc, FOYER.cr)\n    drop.y = drop.y + 3\n    for i, c in ipairs(cards) do\n        c.setLock(false)\n        c.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })\n        c.setRotationSmooth({ 0, 180, 180 })\n    end\n\n    Wait.time(function() collectAndDeal(drop, #cards) end, 2.5)\nend\n\nfunction collectAndDeal(drop, expected)\n    local deck = nil\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Deck\" and o.hasTag(\"KeyCard\") then\n            local p = o.getPosition()\n            if math.abs(p.x - drop.x) < 3 and math.abs(p.z - drop.z) < 3 then deck = o end\n        end\n    end\n\n    if deck == nil then\n        broadcastToAll(\"The key cards did not merge into a deck. Nudge them together and reshuffle.\", {1,0.6,0.2})\n        return\n    end\n\n    deck.shuffle()\n    Wait.time(function() dealKeys(deck) end, 1)\nend\n\nfunction dealKeys(deck)\n    local board = findByNick(BOARD_NICK)\n    for i, R in ipairs(ROOMS) do\n        Wait.time(function()\n            if deck ~= nil and not deck.isDestroyed() then\n                local p = cellToWorld(board, R.cc, R.cr)\n                deck.takeObject({\n                    position = { p.x, p.y + 1.5, p.z },\n                    rotation = { 0, 180, 180 },\n                    smooth   = true\n                })\n            end\n        end, i * 0.25)\n    end\n    Wait.time(function()\n        broadcastToAll(\"Ten keys hidden. Nobody knows where.\", {0.72,0.72,1})\n    end, #ROOMS * 0.25 + 0.5)\nend\n\n--=============================================================\n--  Ghost sight \u2014 the dead see every key, privately\n--=============================================================\nfunction btnPeekKeys(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then return end\n    if not GHOSTS[colour] then\n        broadcastToColor(\"Only the dead see the house for what it is.\", colour, {1,0.45,0.45})\n        return\n    end\n    local lines = { \"--- THE KEYS ---\" }\n    for _, R in ipairs(ROOMS) do\n        local z, what = zoneOf(R.id), \"(empty)\"\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then what = o.getName() end\n            end\n        end\n        lines[#lines+1] = R.name .. \": \" .. what\n    end\n    broadcastToColor(table.concat(lines, \"\\n\"), colour, {0.6,0.9,1})\nend\n\nfunction makeGhost(colour)\n    GHOSTS[colour] = true\n    broadcastToAll(colour .. \" has died.\", {0.6,0.6,0.6})\n    broadcastToColor(\"You are a ghost. Draw an Allegiance card and a secret objective, then use Ghost sight.\",\n                     colour, {0.6,0.9,1})\nend\n\nfunction reviveAll()\n    GHOSTS = {}\n    broadcastToAll(\"Ghost list cleared.\", {0.7,0.7,0.7})\nend\n\n--=============================================================\n--  Rounds and the killer\n--=============================================================\nfunction btnEndRound()\n    currentRound = currentRound + 1\n    if killerBackOn ~= nil then\n        if currentRound >= killerBackOn then\n            killerBackOn = nil\n            broadcastToAll(\"Round \" .. currentRound .. \". The killer returns, at full Health.\", {1,0.25,0.25})\n            return\n        end\n        broadcastToAll(\"Round \" .. currentRound .. \". The killer is still gone.\", {0.62,0.62,0.62})\n        return\n    end\n    broadcastToAll(\"Round \" .. currentRound, {1,1,1})\nend\n\nfunction btnKillerDriven()\n    killerBackOn = currentRound + 2\n    broadcastToAll(\"Driven off. Gone for 2 rounds, back at full Health. +1 VP\", {0.45,1,0.55})\nend\n\n--=============================================================\n--  Controls\n--=============================================================\nfunction buildButtons()\n    local host = findByNick(CONTROL_NICK)\n    if host == nil then return end\n    host.clearButtons()\n    local defs = {\n        { \"btnReshuffleKeys\", \"Reshuffle keys\",  -1.05 },\n        { \"btnPeekKeys\",      \"Ghost sight\",     -0.35 },\n        { \"btnKillerDriven\",  \"Killer driven off\", 0.35 },\n        { \"btnEndRound\",      \"End round\",        1.05 },\n    }\n    for _, d in ipairs(defs) do\n        host.createButton({\n            click_function = d[1], function_owner = Global, label = d[2],\n            position = { 0, 0.3, d[3] }, width = 1500, height = 500,\n            font_size = 170, color = {0.93,0.95,0.97}, font_color = {0.1,0.13,0.17}\n        })\n    end\n    host.createButton({\n        click_function = \"btnAlign\", function_owner = Global, label = \"Align to board\",\n        position = { 0, 0.3, 1.75 }, width = 1500, height = 400,\n        font_size = 150, color = {0.80,0.84,0.88}, font_color = {0.1,0.13,0.17}\n    })\nend\n\nfunction btnAlign() alignZones(false) end\n",
+ "LuaScriptState": "",
+ "XmlUI": "<Panel id=\"hauntedControls\" rectAlignment=\"UpperLeft\" offsetXY=\"16 -16\"\n       width=\"212\" height=\"336\" color=\"#152232F0\"\n       outlineColor=\"#93A9BE\" outline=\"1 1\">\n  <VerticalLayout padding=\"12 12 10 12\" spacing=\"6\" childForceExpandHeight=\"false\">\n    <Text fontSize=\"15\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredHeight=\"24\">HAUNTED</Text>\n    <Button onClick=\"btnReshuffleKeys\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">Reshuffle keys</Button>\n    <Button onClick=\"btnPeekKeys\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">Ghost sight</Button>\n    <Button onClick=\"btnKillerDriven\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">Killer driven off</Button>\n    <Button onClick=\"btnEndRound\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">End round</Button>\n    <Button onClick=\"btnAlign\" fontSize=\"13\" preferredHeight=\"32\"\n            color=\"#B7C4D2\" textColor=\"#1B2C3E\">Align to board</Button>\n    <Button onClick=\"btnDiagnose\" fontSize=\"13\" preferredHeight=\"30\"\n            color=\"#8FA2B5\" textColor=\"#0F1924\">Board report</Button>\n  </VerticalLayout>\n</Panel>",
+ "ObjectStates": [
+  {
+   "GUID": "4e6bcd",
+   "Name": "Custom_Tile",
+   "Transform": {
+    "posX": 0,
+    "posY": 1.0,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 7,
+    "scaleY": 1,
+    "scaleZ": 7
+   },
+   "Nickname": "Thornfield Manor",
+   "Description": "Paste your board image URL, then click Align to board on the control block.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "CustomImage": {
+    "ImageURL": "PASTE_YOUR_BOARD_IMAGE_URL_HERE",
+    "ImageSecondaryURL": "",
+    "ImageScalar": 1.0,
+    "WidthScale": 0.0,
+    "CustomTile": {
+     "Type": 0,
+     "Thickness": 0.2,
+     "Stackable": false,
+     "Stretch": true
+    }
+   }
+  },
+  {
+   "GUID": "7c1c7b",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Foyer",
+   "Description": "Foyer \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "d1b6b1",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Kitchen",
+   "Description": "Kitchen \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "be37ed",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Guestroom",
+   "Description": "Guestroom \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "3fd05d",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Parlour",
+   "Description": "Parlour \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "cb0974",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Library",
+   "Description": "Library \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "88531f",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Study",
+   "Description": "Study \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "1c3948",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "DiningRoom",
+   "Description": "Dining Room \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "3cd7f4",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Conservatory",
+   "Description": "Conservatory \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "e97bc4",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Lounge",
+   "Description": "Lounge \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "4598cc",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Ballroom",
+   "Description": "Ballroom \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "29cb38",
+   "Name": "ScriptingTrigger",
+   "Transform": {
+    "posX": 0,
+    "posY": 2,
+    "posZ": 0,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Bedroom",
+   "Description": "Bedroom \u2014 do not rename; the script finds it by this name.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 1,
+    "g": 1,
+    "b": 1
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": true,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": ""
+  },
+  {
+   "GUID": "365a85",
+   "Name": "Bag",
+   "Transform": {
+    "posX": -14,
+    "posY": 1.5,
+    "posZ": 5,
+    "rotX": 0,
+    "rotY": 0,
+    "rotZ": 0,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Key Cards - staging",
+   "Description": "Put the 10 Key Cards here at setup, tagged KeyCard, then deal them out.",
+   "GMNotes": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "ColorDiffuse": {
+    "r": 0.66,
+    "g": 0.52,
+    "b": 0.18
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0,
+   "Locked": false,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": false,
+   "Hands": false,
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "Bag": {
+    "Order": 0
+   }
+  }
+ ]
+}
