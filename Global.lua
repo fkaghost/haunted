@@ -1,5 +1,5 @@
 --=============================================================
---  HAUNTED  ·  Thornfield Manor
+--  KILLER MANSION  ·  Thornfield Manor
 --  Global script — board alignment, key reshuffle, ghost sight,
 --  round tracking and killer removal.
 --
@@ -44,7 +44,8 @@ for i, v in ipairs(ROOMS) do ROOM_ORDER[i] = v.id end
 zoneGUID     = {}      -- room id -> scripting zone GUID
 GHOSTS       = {}      -- player colour -> true
 currentRound = 1
-killerBackOn = nil     -- round the killer returns on
+killerSlayer = nil     -- seat colour of whoever drove the killer off
+slayerTurns  = 0       -- completed turns by that player since
 
 function onLoad(saved)
     if saved and saved ~= "" then
@@ -53,21 +54,27 @@ function onLoad(saved)
             zoneGUID     = s.zoneGUID or {}
             GHOSTS       = s.GHOSTS or {}
             currentRound = s.currentRound or 1
-            killerBackOn = s.killerBackOn
+            killerSlayer = s.killerSlayer
+            slayerTurns  = s.slayerTurns or 0
+            HEALTH       = s.HEALTH or {}
+            KILLER_HP    = s.KILLER_HP or 8
+            KILLER_MAX   = s.KILLER_MAX or 8
         end
     end
     Wait.time(function()
         indexZones()
         alignZones(true)
         buildButtons()
-        broadcastToAll("Haunted ready. Controls are the panel at the top-left of your screen.", {0.72,0.82,0.94})
+        buildUI()
+        broadcastToAll("Killer Mansion ready. Controls are the panel at the top-left of your screen.", {0.72,0.82,0.94})
         broadcastToAll("Import your board image, then click Align to board.", {0.62,0.72,0.84})
     end, 1)
 end
 
 function onSave()
     return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,
-                         currentRound=currentRound, killerBackOn=killerBackOn })
+                         currentRound=currentRound, killerSlayer=killerSlayer, slayerTurns=slayerTurns,
+                         HEALTH=HEALTH, KILLER_HP=KILLER_HP, KILLER_MAX=KILLER_MAX })
 end
 
 function findByNick(nick)
@@ -162,6 +169,52 @@ function squareUpBoard(board)
     return true
 end
 
+DECK_ROW = { "Draw Deck", "Ghost Deck", "Key Deck",
+             "Allegiance Deck", "Character Cards", "Killer Cards" }
+
+-- Spread the decks in a row just off the board's near edge, so they never
+-- land on top of the plan whatever size the board ends up.
+function layoutDecks(board)
+    local b = board.getBounds()
+    local z = b.center.z - b.size.z / 2 - 4.5
+    local y = b.center.y + b.size.y / 2 + 1.2
+    local gap = math.max(3.2, b.size.x / 7)
+    local x0 = b.center.x - gap * (#DECK_ROW - 1) / 2
+
+    for i, nick in ipairs(DECK_ROW) do
+        local d = findByNick(nick)
+        if d ~= nil then
+            d.setPositionSmooth({ x0 + (i - 1) * gap, y, z })
+            d.setRotationSmooth({ 0, 180, 180 })
+        end
+    end
+
+    -- dice sit to the left of the deck row
+    local dice = { {"Movement d6", -2.6}, {"Killer d10", -1.1} }
+    for _, v in ipairs(dice) do
+        local o = findByNick(v[1])
+        if o ~= nil then o.setPositionSmooth({ x0 + v[2] * gap / 2 - gap, y, z }) end
+    end
+
+    for i, o in ipairs(refs) do
+        o.setPositionSmooth({ b.center.x + (i - (#refs + 1) / 2) * 5.2,
+                              y, z - 6.5 })
+        o.setRotationSmooth({ 0, 0, 0 })
+    end
+
+    -- pawns start in the Foyer
+    local pawns = {}
+    for _, o in ipairs(getAllObjects()) do
+        if o.getName():match(" pawn$") then pawns[#pawns+1] = o end
+    end
+    for i, o in ipairs(pawns) do
+        local col = FOYER.c + ((i - 1) % FOYER.w)
+        local row = FOYER.r + math.floor((i - 1) / FOYER.w)
+        local p = cellToWorld(board, col, row)
+        o.setPositionSmooth({ p.x, p.y + 1.5, p.z })
+    end
+end
+
 -- Prints what TTS actually reports, so a misbehaving board can be diagnosed
 -- instead of guessed at.
 function btnDiagnose()
@@ -232,6 +285,8 @@ function placeZones(board, quiet)
     end
 
     Global.setSnapPoints(snaps)
+
+    layoutDecks(board)
 
     -- park the control block clear of the board's left edge, so it can never
     -- end up hidden underneath a board that got scaled up
@@ -356,6 +411,7 @@ end
 
 function makeGhost(colour)
     GHOSTS[colour] = true
+    buildUI()
     broadcastToAll(colour .. " has died.", {0.6,0.6,0.6})
     broadcastToColor("You are a ghost. Draw an Allegiance card and a secret objective, then use Ghost sight.",
                      colour, {0.6,0.9,1})
@@ -363,34 +419,205 @@ end
 
 function reviveAll()
     GHOSTS = {}
+    buildUI()
     broadcastToAll("Ghost list cleared.", {0.7,0.7,0.7})
 end
 
 --=============================================================
 --  Rounds and the killer
 --=============================================================
-function btnEndRound()
-    currentRound = currentRound + 1
-    if killerBackOn ~= nil then
-        if currentRound >= killerBackOn then
-            killerBackOn = nil
-            broadcastToAll("Round " .. currentRound .. ". The killer returns, at full Health.", {1,0.25,0.25})
-            return
-        end
-        broadcastToAll("Round " .. currentRound .. ". The killer is still gone.", {0.62,0.62,0.62})
-        return
+function btnEndTurn(a, b)
+    if Turns.enable then
+        Turns.turn_color = Turns.getNextTurnColor()
+    else
+        broadcastToAll("Turn order is off. Use 'Start turns' first.", {1,0.7,0.3})
     end
-    broadcastToAll("Round " .. currentRound, {1,1,1})
 end
 
-function btnKillerDriven()
-    killerBackOn = currentRound + 2
-    broadcastToAll("Driven off. Gone for 2 rounds, back at full Health. +1 VP", {0.45,1,0.55})
+function btnStartTurns()
+    local seats = seatedColours()
+    if #seats == 0 then
+        broadcastToAll("Nobody is seated.", {1,0.7,0.3})
+        return
+    end
+    Turns.enable = true
+    Turns.type = 2               -- custom order
+    Turns.order = seats
+    Turns.turn_color = seats[1]
+    currentRound = 1
+    broadcastToAll("Turn order set: " .. table.concat(seats, ", "), {0.72,0.82,0.94})
+    buildUI()
+end
+
+-- Fires when the active seat changes. previousPlayer has just finished a turn.
+function onPlayerTurn(player, previousPlayer)
+    if previousPlayer ~= nil and killerSlayer ~= nil
+       and previousPlayer.color == killerSlayer then
+        slayerTurns = slayerTurns + 1
+        if slayerTurns >= 2 then
+            broadcastToAll("The killer returns, at FULL Health.", {1,0.25,0.25})
+            killerSlayer = nil
+            slayerTurns  = 0
+            KILLER_HP    = KILLER_MAX
+        else
+            broadcastToAll("The killer stays away for one more of " ..
+                           killerSlayer .. "'s turns.", {0.62,0.62,0.62})
+        end
+    end
+
+    local seats = Turns.order
+    if seats ~= nil and #seats > 0 and player ~= nil and player.color == seats[1] then
+        currentRound = currentRound + 1
+        broadcastToAll("Round " .. currentRound, {1,1,1})
+    end
+    buildUI()
+end
+
+function btnKillerDriven(a, b)
+    local colour = clickerColour(a, b)
+    if colour == nil then
+        broadcastToAll("Could not tell who drove the killer off.", {1,0.7,0.3})
+        return
+    end
+    killerSlayer = colour
+    slayerTurns  = 0
+    KILLER_HP    = 0
+    broadcastToAll(colour .. " drove the killer off. +1 VP. It returns at full Health "
+                   .. "once " .. colour .. " has played two more turns.", {0.45,1,0.55})
+    buildUI()
 end
 
 --=============================================================
 --  Controls
 --=============================================================
+
+--=============================================================
+--  Screen UI — controls panel and the health tracker.
+--  All of it is built here in Lua rather than baked into the save,
+--  so the health rows can follow who is actually seated.
+--=============================================================
+HEALTH      = {}          -- seat colour -> current health
+KILLER_HP   = 8
+KILLER_MAX  = 8
+MAXES       = { 6, 8, 10 }
+
+SEAT_ORDER = { "White","Brown","Red","Orange","Yellow","Green",
+               "Teal","Blue","Purple","Pink","Grey","Black" }
+
+SEAT_HEX = {
+    White="#F2F5F8", Brown="#8B5E3C", Red="#C0392B", Orange="#D4791F",
+    Yellow="#C9A227", Green="#3F8B5B", Teal="#2E8B8B", Blue="#3A6FB0",
+    Purple="#6B5B8C", Pink="#C46A94", Grey="#7A8894", Black="#3A424C"
+}
+
+function seatedColours()
+    local out = {}
+    for _, p in ipairs(Player.getPlayers()) do
+        if p.seated then out[#out+1] = p.color end
+    end
+    table.sort(out, function(a, b)
+        local ia, ib = 99, 99
+        for i, c in ipairs(SEAT_ORDER) do
+            if c == a then ia = i end
+            if c == b then ib = i end
+        end
+        return ia < ib
+    end)
+    return out
+end
+
+function esc(s) return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;") end
+
+function hpRow(label, hex, value, tag, extra)
+    return table.concat({
+      '<HorizontalLayout preferredHeight="30" spacing="3">',
+        '<Text fontSize="13" color="', hex, '" alignment="MiddleLeft" preferredWidth="66">', esc(label), '</Text>',
+        '<Button onClick="hpAdjust(', tag, '|-1)" fontSize="16" preferredWidth="26" color="#E9EEF3" textColor="#1B2C3E">-</Button>',
+        '<Text fontSize="16" color="#DCE8F2" alignment="MiddleCenter" preferredWidth="34">', tostring(value), '</Text>',
+        '<Button onClick="hpAdjust(', tag, '|1)" fontSize="16" preferredWidth="26" color="#E9EEF3" textColor="#1B2C3E">+</Button>',
+        extra or '',
+      '</HorizontalLayout>'
+    })
+end
+
+function buildUI()
+    local seats = seatedColours()
+    local rows = {}
+
+    for _, c in ipairs(seats) do
+        if HEALTH[c] == nil then HEALTH[c] = 5 end
+        local dead = GHOSTS[c] and "  (ghost)" or ""
+        rows[#rows+1] = hpRow(c .. dead, SEAT_HEX[c] or "#DCE8F2", HEALTH[c], c)
+    end
+    if #seats == 0 then
+        rows[#rows+1] = '<Text fontSize="12" color="#8FA2B5" alignment="MiddleCenter" preferredHeight="40">Sit in a seat, then press Refresh seats</Text>'
+    end
+
+    rows[#rows+1] = '<Text fontSize="11" color="#5A7086" alignment="MiddleCenter" preferredHeight="16">THE KILLER</Text>'
+    rows[#rows+1] = hpRow("Killer", "#C0392B", KILLER_HP .. "/" .. KILLER_MAX, "KILLER",
+        '<Button onClick="cycleKillerMax" fontSize="10" preferredWidth="34" color="#8FA2B5" textColor="#0F1924">max</Button>')
+
+    local panelH = 108 + math.max(1, #seats) * 33
+
+    local xml = table.concat({
+    '<Panel id="hauntedControls" rectAlignment="UpperLeft" offsetXY="16 -16" width="212" height="372" color="#152232F0" outlineColor="#93A9BE" outline="1 1">',
+      '<VerticalLayout padding="12 12 10 12" spacing="6" childForceExpandHeight="false">',
+        '<Text fontSize="15" color="#DCE8F2" alignment="MiddleCenter" preferredHeight="24">KILLER MANSION</Text>',
+        '<Button onClick="btnReshuffleKeys" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">Reshuffle keys</Button>',
+        '<Button onClick="btnPeekKeys" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">Ghost sight</Button>',
+        '<Button onClick="btnKillerDriven" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">Killer driven off</Button>',
+        '<Button onClick="btnEndTurn" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">End turn</Button>',
+        '<Button onClick="btnStartTurns" fontSize="12" preferredHeight="28" color="#B7C4D2" textColor="#1B2C3E">Start turns</Button>',
+        '<Button onClick="btnAlign" fontSize="13" preferredHeight="32" color="#B7C4D2" textColor="#1B2C3E">Align to board</Button>',
+        '<Button onClick="btnDiagnose" fontSize="13" preferredHeight="30" color="#8FA2B5" textColor="#0F1924">Board report</Button>',
+      '</VerticalLayout>',
+    '</Panel>',
+    '<Panel id="hauntedHealth" rectAlignment="UpperRight" offsetXY="-16 -16" width="228" height="', tostring(panelH), '" color="#152232F0" outlineColor="#93A9BE" outline="1 1">',
+      '<VerticalLayout padding="10 10 8 10" spacing="3" childForceExpandHeight="false">',
+        '<Text fontSize="14" color="#DCE8F2" alignment="MiddleCenter" preferredHeight="22">HEALTH</Text>',
+        table.concat(rows),
+        '<Button onClick="btnRefreshSeats" fontSize="11" preferredHeight="24" color="#8FA2B5" textColor="#0F1924">Refresh seats</Button>',
+      '</VerticalLayout>',
+    '</Panel>'
+    })
+
+    UI.setXml(xml)
+end
+
+function hpAdjust(player, value, id)
+    local who, delta = value:match("^(.-)|(-?%d+)$")
+    if who == nil then return end
+    delta = tonumber(delta)
+    if who == "KILLER" then
+        KILLER_HP = math.max(0, math.min(KILLER_MAX, KILLER_HP + delta))
+        if KILLER_HP == 0 then
+            broadcastToAll("The killer is at 0 Health — use 'Killer driven off'.", {1,0.5,0.4})
+        end
+    else
+        HEALTH[who] = math.max(0, (HEALTH[who] or 5) + delta)
+        if HEALTH[who] == 0 then
+            broadcastToAll(who .. " is at 0 Health.", {0.85,0.4,0.4})
+        end
+    end
+    buildUI()
+end
+
+function cycleKillerMax()
+    local i = 1
+    for n, v in ipairs(MAXES) do if v == KILLER_MAX then i = n end end
+    KILLER_MAX = MAXES[(i % #MAXES) + 1]
+    KILLER_HP = KILLER_MAX
+    broadcastToAll("Killer set to " .. KILLER_MAX .. " Health.", {0.85,0.55,0.5})
+    buildUI()
+end
+
+function btnRefreshSeats()
+    buildUI()
+    broadcastToAll(#seatedColours() .. " players seated.", {0.72,0.82,0.94})
+end
+
+function onPlayerChangeColor() Wait.time(buildUI, 0.4) end
+
 function buildButtons()
     local host = findByNick(CONTROL_NICK)
     if host == nil then return end

@@ -1,107 +1,20 @@
 {
- "SaveName": "Haunted \u2014 Thornfield Manor",
- "EpochTime": 0,
+ "SaveName": "Killer Mansion - Thornfield Manor",
+ "GameMode": "Killer Mansion",
  "Date": "",
  "VersionNumber": "",
- "GameMode": "Haunted",
  "GameType": "",
  "GameComplexity": "",
  "Tags": [],
- "PlayingTime": [
-  30,
-  90
- ],
- "PlayerCounts": [
-  2,
-  6
- ],
  "Gravity": 0.5,
  "PlayArea": 0.8,
  "Table": "Table_Square",
  "Sky": "Sky_Museum",
- "Note": "Thornfield Manor - 10 searchable rooms plus the Foyer.",
- "TabStates": {},
- "MusicPlayer": {
-  "RepeatSong": false,
-  "PlaylistEntry": 0,
-  "CurrentAudioTitle": "",
-  "CurrentAudioURL": ""
- },
- "Grid": {
-  "Type": 0,
-  "Lines": false,
-  "Color": {
-   "r": 0,
-   "g": 0,
-   "b": 0
-  },
-  "Opacity": 0.75,
-  "ThickLines": false,
-  "Snapping": false,
-  "Offset": false,
-  "BothSnapping": false,
-  "xSize": 2,
-  "ySize": 2,
-  "PosOffset": {
-   "x": 0,
-   "y": 1,
-   "z": 0
-  }
- },
- "Lighting": {
-  "LightIntensity": 0.54,
-  "LightColor": {
-   "r": 1,
-   "g": 0.9804,
-   "b": 0.8902
-  },
-  "AmbientIntensity": 1.3,
-  "AmbientType": 0,
-  "AmbientSkyColor": {
-   "r": 0.5,
-   "g": 0.5,
-   "b": 0.5
-  },
-  "AmbientEquatorColor": {
-   "r": 0.5,
-   "g": 0.5,
-   "b": 0.5
-  },
-  "AmbientGroundColor": {
-   "r": 0.5,
-   "g": 0.5,
-   "b": 0.5
-  },
-  "ReflectionIntensity": 1.0,
-  "LutIndex": 0,
-  "LutContribution": 1.0
- },
- "Hands": {
-  "Enable": true,
-  "DisableUnused": false,
-  "Hiding": 0
- },
- "ComponentTags": {
-  "labels": [
-   {
-    "displayed": "KeyCard",
-    "normalized": "keycard"
-   }
-  ]
- },
- "Turns": {
-  "Enable": false,
-  "Type": 0,
-  "TurnOrder": [],
-  "Reverse": false,
-  "SkipEmpty": false,
-  "DisableInteractions": false,
-  "PassTurns": true,
-  "TurnColor": ""
- },
- "LuaScript": "--=============================================================\n--  HAUNTED  \u00b7  Thornfield Manor\n--  Global script \u2014 board alignment, key reshuffle, ghost sight,\n--  round tracking and killer removal.\n--\n--  On load this positions every scripting zone over its room by\n--  measuring the board, so the board can be moved, rotated in 90-degree\n--  steps or rescaled and the zones will follow. If anything drifts,\n--  click \"Align to board\" on the control block.\n--=============================================================\n\nBOARD_NICK   = \"Thornfield Manor\"\nCONTROL_NICK = \"Haunted Controls\"\n\nGRID = 20\n\n-- If the plan comes out mirrored front-to-back, flip this and re-align.\nROW0_IS_FAR = true\n\n-- Room rectangles in grid cells: c,r = top-left of the largest rectangle\n-- that fits inside the room; w,h = its size; cc,cr = the centre cell where\n-- that room's Key Card is dealt.\nROOMS = {\n    { id=\"Kitchen\", name=\"Kitchen\", c=15, r=15, w=5, h=5, cc=17, cr=17 },\n    { id=\"Guestroom\", name=\"Guestroom\", c=0, r=15, w=3, h=5, cc=1, cr=17 },\n    { id=\"Parlour\", name=\"Parlour\", c=0, r=0, w=4, h=6, cc=1, cr=2 },\n    { id=\"Library\", name=\"Library\", c=15, r=8, w=5, h=5, cc=17, cr=10 },\n    { id=\"Study\", name=\"Study\", c=6, r=0, w=4, h=5, cc=8, cr=2 },\n    { id=\"DiningRoom\", name=\"Dining Room\", c=10, r=14, w=2, h=6, cc=11, cr=17 },\n    { id=\"Conservatory\", name=\"Conservatory\", c=17, r=0, w=3, h=6, cc=18, cr=2 },\n    { id=\"Lounge\", name=\"Lounge\", c=5, r=15, w=3, h=5, cc=6, cr=17 },\n    { id=\"Ballroom\", name=\"Ballroom\", c=0, r=8, w=6, h=5, cc=2, cr=10 },\n    { id=\"Bedroom\", name=\"Bedroom\", c=12, r=0, w=3, h=6, cc=13, cr=2 },\n}\n\nFOYER = { id=\"Foyer\", name=\"Foyer\", c=8, r=8, w=4, h=5, cc=9, cr=10 }\n\nROOM_ORDER = {}\nfor i, v in ipairs(ROOMS) do ROOM_ORDER[i] = v.id end\n\n--=============================================================\n--  State\n--=============================================================\nzoneGUID     = {}      -- room id -> scripting zone GUID\nGHOSTS       = {}      -- player colour -> true\ncurrentRound = 1\nkillerBackOn = nil     -- round the killer returns on\n\nfunction onLoad(saved)\n    if saved and saved ~= \"\" then\n        local ok, s = pcall(function() return JSON.decode(saved) end)\n        if ok and s then\n            zoneGUID     = s.zoneGUID or {}\n            GHOSTS       = s.GHOSTS or {}\n            currentRound = s.currentRound or 1\n            killerBackOn = s.killerBackOn\n        end\n    end\n    Wait.time(function()\n        indexZones()\n        alignZones(true)\n        buildButtons()\n        broadcastToAll(\"Haunted ready. Controls are the panel at the top-left of your screen.\", {0.72,0.82,0.94})\n        broadcastToAll(\"Import your board image, then click Align to board.\", {0.62,0.72,0.84})\n    end, 1)\nend\n\nfunction onSave()\n    return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,\n                         currentRound=currentRound, killerBackOn=killerBackOn })\nend\n\nfunction findByNick(nick)\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName() == nick then return o end\n    end\n    return nil\nend\n\nfunction indexZones()\n    zoneGUID = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Scripting\" then\n            local n = o.getName()\n            for _, R in ipairs(ROOMS) do\n                if n == R.id then zoneGUID[R.id] = o.getGUID() end\n            end\n            if n == FOYER.id then zoneGUID[FOYER.id] = o.getGUID() end\n        end\n    end\nend\n\nfunction zoneOf(id)\n    local g = zoneGUID[id]\n    return g and getObjectFromGUID(g) or nil\nend\n\n--=============================================================\n--  Click plumbing\n--  Object buttons call back as (object, playerColour, altClick).\n--  Screen-panel buttons call back as (player, value, elementId).\n--  This works out who clicked either way.\n--=============================================================\nSEAT_COLOURS = {\n    White=true, Brown=true, Red=true, Orange=true, Yellow=true, Green=true,\n    Teal=true, Blue=true, Purple=true, Pink=true, Grey=true, Black=true\n}\n\nfunction clickerColour(a, b)\n    if type(b) == \"string\" and SEAT_COLOURS[b] then return b end\n    if type(a) == \"table\" or type(a) == \"userdata\" then\n        local ok, col = pcall(function() return a.color end)\n        if ok and type(col) == \"string\" and SEAT_COLOURS[col] then return col end\n    end\n    if type(b) == \"string\" and b ~= \"\" then return b end\n    return nil\nend\n\n--=============================================================\n--  Alignment \u2014 everything is derived from the board's own bounds,\n--  so no hand-typed coordinates and no guessing at TTS units.\n--=============================================================\nfunction cellToWorld(board, col, row)\n    local b  = board.getBounds()\n    local cw = b.size.x / GRID\n    local cd = b.size.z / GRID\n    local x  = b.center.x - b.size.x / 2 + (col + 0.5) * cw\n    local z\n    if ROW0_IS_FAR then\n        z = b.center.z + b.size.z / 2 - (row + 0.5) * cd\n    else\n        z = b.center.z - b.size.z / 2 + (row + 0.5) * cd\n    end\n    return { x = x, y = b.center.y + b.size.y / 2 + 0.2, z = z }, cw, cd\nend\n\n-- The TTS board mesh is not square, and until a real image loads there is no\n-- aspect ratio to derive one from. Measure the board and stretch it back to a\n-- square footprint so one grid cell is the same size along X and Z.\nfunction squareUpBoard(board)\n    local b = board.getBoundsNormalized()\n    local s = board.getScale()\n    if b.size.x <= 0.01 or b.size.z <= 0.01 or s.x <= 0 or s.z <= 0 then\n        broadcastToAll(\"Could not measure the board. Is the image imported?\", {1,0.6,0.2})\n        return false\n    end\n\n    local perX = b.size.x / s.x        -- world units per unit of scale\n    local perZ = b.size.z / s.z\n    if perX <= 0.001 or perZ <= 0.001 then return false end\n\n    local wantZ = b.size.x / perZ      -- keep the current width, match the depth to it\n    if wantZ <= 0 or wantZ > 1000 then\n        broadcastToAll(\"Board measurement looks wrong; leaving its size alone.\", {1,0.6,0.2})\n        return false\n    end\n    if math.abs(wantZ - s.z) < 0.005 then return false end\n\n    board.setLock(false)\n    board.setScale({ s.x, s.y, wantZ })\n    board.setLock(true)\n    return true\nend\n\n-- Prints what TTS actually reports, so a misbehaving board can be diagnosed\n-- instead of guessed at.\nfunction btnDiagnose()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'.\", {1,0.4,0.3})\n        return\n    end\n    local b  = board.getBounds()\n    local bn = board.getBoundsNormalized()\n    local s  = board.getScale()\n    indexZones()\n    local n = 0\n    for _ in pairs(zoneGUID) do n = n + 1 end\n\n    local L = {\n        \"--- BOARD ---\",\n        \"name       : \" .. tostring(board.getName()),\n        \"type       : \" .. tostring(board.type),\n        \"scale      : \" .. string.format(\"%.2f, %.2f, %.2f\", s.x, s.y, s.z),\n        \"bounds     : \" .. string.format(\"%.2f x %.2f x %.2f\", b.size.x, b.size.y, b.size.z),\n        \"normalised : \" .. string.format(\"%.2f x %.2f x %.2f\", bn.size.x, bn.size.y, bn.size.z),\n        \"square?    : \" .. (math.abs(bn.size.x - bn.size.z) < 0.05 and \"yes\" or \"NO\"),\n        \"cell size  : \" .. string.format(\"%.3f x %.3f\", b.size.x / GRID, b.size.z / GRID),\n        \"zones found: \" .. n .. \" of \" .. (#ROOMS + 1),\n    }\n    print(table.concat(L, \"\\n\"))\n    broadcastToAll(\"Board report printed to chat.\", {0.72,0.82,0.94})\nend\n\nfunction alignZones(quiet)\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'. Rename the board and align again.\", {1,0.4,0.3})\n        return\n    end\n\n    if squareUpBoard(board) then\n        if not quiet then\n            broadcastToAll(\"Board squared up.\", {0.7,0.85,1})\n        end\n        Wait.time(function() placeZones(board, quiet) end, 0.5)\n        return\n    end\n    placeZones(board, quiet)\nend\n\nfunction placeZones(board, quiet)\n    indexZones()\n\n    local all = {}\n    for _, R in ipairs(ROOMS) do all[#all+1] = R end\n    all[#all+1] = FOYER\n\n    local snaps, placed = {}, 0\n    for _, R in ipairs(all) do\n        local z = zoneOf(R.id)\n        local _, cw, cd = cellToWorld(board, 0, 0)\n        local pos = cellToWorld(board, R.c + R.w / 2 - 0.5, R.r + R.h / 2 - 0.5)\n        if z ~= nil then\n            z.setPosition(pos)\n            z.setRotation({0, 0, 0})\n            z.setScale({ cw * R.w, 3, cd * R.h })\n            placed = placed + 1\n        end\n        local sp = cellToWorld(board, R.cc, R.cr)\n        snaps[#snaps+1] = { position = sp, rotation = {0,0,0}, rotation_snap = true }\n    end\n\n    Global.setSnapPoints(snaps)\n\n    -- park the control block clear of the board's left edge, so it can never\n    -- end up hidden underneath a board that got scaled up\n    local ctrl = findByNick(CONTROL_NICK)\n    if ctrl ~= nil then\n        local b = board.getBounds()\n        ctrl.setLock(false)\n        ctrl.setPosition({ b.center.x - b.size.x / 2 - 3.5,\n                           b.center.y + b.size.y / 2 + 0.6,\n                           b.center.z })\n        ctrl.setRotation({0, 0, 0})\n        ctrl.setLock(true)\n    end\n\n    if not quiet then\n        broadcastToAll(placed .. \" of \" .. #all .. \" room zones aligned.\", {0.7,0.85,1})\n    end\n    if placed < #all then\n        broadcastToAll(\"Missing zones. Each scripting zone must be named exactly as its room.\", {1,0.7,0.3})\n    end\nend\n\n--=============================================================\n--  Keys \u2014 gather all ten, reshuffle, deal one face-down per room\n--=============================================================\nfunction keyCardsInPlay()\n    local found = {}\n    for _, R in ipairs(ROOMS) do\n        local z = zoneOf(R.id)\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then found[#found+1] = o end\n            end\n        end\n    end\n    return found\nend\n\nfunction btnReshuffleKeys()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then broadcastToAll(\"Board not found.\", {1,0.4,0.3}) return end\n\n    local cards = keyCardsInPlay()\n    if #cards == 0 then\n        broadcastToAll(\"No cards tagged KeyCard are sitting in the rooms.\", {1,0.7,0.3})\n        return\n    end\n\n    broadcastToAll(\"The house rearranges itself...\", {0.72,0.72,1})\n\n    -- stack them all on one spot so they merge into a deck\n    local drop = cellToWorld(board, FOYER.cc, FOYER.cr)\n    drop.y = drop.y + 3\n    for i, c in ipairs(cards) do\n        c.setLock(false)\n        c.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })\n        c.setRotationSmooth({ 0, 180, 180 })\n    end\n\n    Wait.time(function() collectAndDeal(drop, #cards) end, 2.5)\nend\n\nfunction collectAndDeal(drop, expected)\n    local deck = nil\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Deck\" and o.hasTag(\"KeyCard\") then\n            local p = o.getPosition()\n            if math.abs(p.x - drop.x) < 3 and math.abs(p.z - drop.z) < 3 then deck = o end\n        end\n    end\n\n    if deck == nil then\n        broadcastToAll(\"The key cards did not merge into a deck. Nudge them together and reshuffle.\", {1,0.6,0.2})\n        return\n    end\n\n    deck.shuffle()\n    Wait.time(function() dealKeys(deck) end, 1)\nend\n\nfunction dealKeys(deck)\n    local board = findByNick(BOARD_NICK)\n    for i, R in ipairs(ROOMS) do\n        Wait.time(function()\n            if deck ~= nil and not deck.isDestroyed() then\n                local p = cellToWorld(board, R.cc, R.cr)\n                deck.takeObject({\n                    position = { p.x, p.y + 1.5, p.z },\n                    rotation = { 0, 180, 180 },\n                    smooth   = true\n                })\n            end\n        end, i * 0.25)\n    end\n    Wait.time(function()\n        broadcastToAll(\"Ten keys hidden. Nobody knows where.\", {0.72,0.72,1})\n    end, #ROOMS * 0.25 + 0.5)\nend\n\n--=============================================================\n--  Ghost sight \u2014 the dead see every key, privately\n--=============================================================\nfunction btnPeekKeys(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then return end\n    if not GHOSTS[colour] then\n        broadcastToColor(\"Only the dead see the house for what it is.\", colour, {1,0.45,0.45})\n        return\n    end\n    local lines = { \"--- THE KEYS ---\" }\n    for _, R in ipairs(ROOMS) do\n        local z, what = zoneOf(R.id), \"(empty)\"\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then what = o.getName() end\n            end\n        end\n        lines[#lines+1] = R.name .. \": \" .. what\n    end\n    broadcastToColor(table.concat(lines, \"\\n\"), colour, {0.6,0.9,1})\nend\n\nfunction makeGhost(colour)\n    GHOSTS[colour] = true\n    broadcastToAll(colour .. \" has died.\", {0.6,0.6,0.6})\n    broadcastToColor(\"You are a ghost. Draw an Allegiance card and a secret objective, then use Ghost sight.\",\n                     colour, {0.6,0.9,1})\nend\n\nfunction reviveAll()\n    GHOSTS = {}\n    broadcastToAll(\"Ghost list cleared.\", {0.7,0.7,0.7})\nend\n\n--=============================================================\n--  Rounds and the killer\n--=============================================================\nfunction btnEndRound()\n    currentRound = currentRound + 1\n    if killerBackOn ~= nil then\n        if currentRound >= killerBackOn then\n            killerBackOn = nil\n            broadcastToAll(\"Round \" .. currentRound .. \". The killer returns, at full Health.\", {1,0.25,0.25})\n            return\n        end\n        broadcastToAll(\"Round \" .. currentRound .. \". The killer is still gone.\", {0.62,0.62,0.62})\n        return\n    end\n    broadcastToAll(\"Round \" .. currentRound, {1,1,1})\nend\n\nfunction btnKillerDriven()\n    killerBackOn = currentRound + 2\n    broadcastToAll(\"Driven off. Gone for 2 rounds, back at full Health. +1 VP\", {0.45,1,0.55})\nend\n\n--=============================================================\n--  Controls\n--=============================================================\nfunction buildButtons()\n    local host = findByNick(CONTROL_NICK)\n    if host == nil then return end\n    host.clearButtons()\n    local defs = {\n        { \"btnReshuffleKeys\", \"Reshuffle keys\",  -1.05 },\n        { \"btnPeekKeys\",      \"Ghost sight\",     -0.35 },\n        { \"btnKillerDriven\",  \"Killer driven off\", 0.35 },\n        { \"btnEndRound\",      \"End round\",        1.05 },\n    }\n    for _, d in ipairs(defs) do\n        host.createButton({\n            click_function = d[1], function_owner = Global, label = d[2],\n            position = { 0, 0.3, d[3] }, width = 1500, height = 500,\n            font_size = 170, color = {0.93,0.95,0.97}, font_color = {0.1,0.13,0.17}\n        })\n    end\n    host.createButton({\n        click_function = \"btnAlign\", function_owner = Global, label = \"Align to board\",\n        position = { 0, 0.3, 1.75 }, width = 1500, height = 400,\n        font_size = 150, color = {0.80,0.84,0.88}, font_color = {0.1,0.13,0.17}\n    })\nend\n\nfunction btnAlign() alignZones(false) end\n",
+ "Note": "Thornfield Manor. Click Align to board after loading.",
+ "Rules": "",
+ "LuaScript": "--=============================================================\n--  KILLER MANSION  \u00b7  Thornfield Manor\n--  Global script \u2014 board alignment, key reshuffle, ghost sight,\n--  round tracking and killer removal.\n--\n--  On load this positions every scripting zone over its room by\n--  measuring the board, so the board can be moved, rotated in 90-degree\n--  steps or rescaled and the zones will follow. If anything drifts,\n--  click \"Align to board\" on the control block.\n--=============================================================\n\nBOARD_NICK   = \"Thornfield Manor\"\nCONTROL_NICK = \"Haunted Controls\"\n\nGRID = 20\n\n-- If the plan comes out mirrored front-to-back, flip this and re-align.\nROW0_IS_FAR = true\n\n-- Room rectangles in grid cells: c,r = top-left of the largest rectangle\n-- that fits inside the room; w,h = its size; cc,cr = the centre cell where\n-- that room's Key Card is dealt.\nROOMS = {\n    { id=\"Kitchen\", name=\"Kitchen\", c=15, r=15, w=5, h=5, cc=17, cr=17 },\n    { id=\"Guestroom\", name=\"Guestroom\", c=0, r=15, w=3, h=5, cc=1, cr=17 },\n    { id=\"Parlour\", name=\"Parlour\", c=0, r=0, w=4, h=6, cc=1, cr=2 },\n    { id=\"Library\", name=\"Library\", c=15, r=8, w=5, h=5, cc=17, cr=10 },\n    { id=\"Study\", name=\"Study\", c=6, r=0, w=4, h=5, cc=8, cr=2 },\n    { id=\"DiningRoom\", name=\"Dining Room\", c=10, r=14, w=2, h=6, cc=11, cr=17 },\n    { id=\"Conservatory\", name=\"Conservatory\", c=17, r=0, w=3, h=6, cc=18, cr=2 },\n    { id=\"Lounge\", name=\"Lounge\", c=5, r=15, w=3, h=5, cc=6, cr=17 },\n    { id=\"Ballroom\", name=\"Ballroom\", c=0, r=8, w=6, h=5, cc=2, cr=10 },\n    { id=\"Bedroom\", name=\"Bedroom\", c=12, r=0, w=3, h=6, cc=13, cr=2 },\n}\n\nFOYER = { id=\"Foyer\", name=\"Foyer\", c=8, r=8, w=4, h=5, cc=9, cr=10 }\n\nROOM_ORDER = {}\nfor i, v in ipairs(ROOMS) do ROOM_ORDER[i] = v.id end\n\n--=============================================================\n--  State\n--=============================================================\nzoneGUID     = {}      -- room id -> scripting zone GUID\nGHOSTS       = {}      -- player colour -> true\ncurrentRound = 1\nkillerSlayer = nil     -- seat colour of whoever drove the killer off\nslayerTurns  = 0       -- completed turns by that player since\n\nfunction onLoad(saved)\n    if saved and saved ~= \"\" then\n        local ok, s = pcall(function() return JSON.decode(saved) end)\n        if ok and s then\n            zoneGUID     = s.zoneGUID or {}\n            GHOSTS       = s.GHOSTS or {}\n            currentRound = s.currentRound or 1\n            killerSlayer = s.killerSlayer\n            slayerTurns  = s.slayerTurns or 0\n            HEALTH       = s.HEALTH or {}\n            KILLER_HP    = s.KILLER_HP or 8\n            KILLER_MAX   = s.KILLER_MAX or 8\n        end\n    end\n    Wait.time(function()\n        indexZones()\n        alignZones(true)\n        buildButtons()\n        buildUI()\n        broadcastToAll(\"Killer Mansion ready. Controls are the panel at the top-left of your screen.\", {0.72,0.82,0.94})\n        broadcastToAll(\"Import your board image, then click Align to board.\", {0.62,0.72,0.84})\n    end, 1)\nend\n\nfunction onSave()\n    return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,\n                         currentRound=currentRound, killerSlayer=killerSlayer, slayerTurns=slayerTurns,\n                         HEALTH=HEALTH, KILLER_HP=KILLER_HP, KILLER_MAX=KILLER_MAX })\nend\n\nfunction findByNick(nick)\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName() == nick then return o end\n    end\n    return nil\nend\n\nfunction indexZones()\n    zoneGUID = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Scripting\" then\n            local n = o.getName()\n            for _, R in ipairs(ROOMS) do\n                if n == R.id then zoneGUID[R.id] = o.getGUID() end\n            end\n            if n == FOYER.id then zoneGUID[FOYER.id] = o.getGUID() end\n        end\n    end\nend\n\nfunction zoneOf(id)\n    local g = zoneGUID[id]\n    return g and getObjectFromGUID(g) or nil\nend\n\n--=============================================================\n--  Click plumbing\n--  Object buttons call back as (object, playerColour, altClick).\n--  Screen-panel buttons call back as (player, value, elementId).\n--  This works out who clicked either way.\n--=============================================================\nSEAT_COLOURS = {\n    White=true, Brown=true, Red=true, Orange=true, Yellow=true, Green=true,\n    Teal=true, Blue=true, Purple=true, Pink=true, Grey=true, Black=true\n}\n\nfunction clickerColour(a, b)\n    if type(b) == \"string\" and SEAT_COLOURS[b] then return b end\n    if type(a) == \"table\" or type(a) == \"userdata\" then\n        local ok, col = pcall(function() return a.color end)\n        if ok and type(col) == \"string\" and SEAT_COLOURS[col] then return col end\n    end\n    if type(b) == \"string\" and b ~= \"\" then return b end\n    return nil\nend\n\n--=============================================================\n--  Alignment \u2014 everything is derived from the board's own bounds,\n--  so no hand-typed coordinates and no guessing at TTS units.\n--=============================================================\nfunction cellToWorld(board, col, row)\n    local b  = board.getBounds()\n    local cw = b.size.x / GRID\n    local cd = b.size.z / GRID\n    local x  = b.center.x - b.size.x / 2 + (col + 0.5) * cw\n    local z\n    if ROW0_IS_FAR then\n        z = b.center.z + b.size.z / 2 - (row + 0.5) * cd\n    else\n        z = b.center.z - b.size.z / 2 + (row + 0.5) * cd\n    end\n    return { x = x, y = b.center.y + b.size.y / 2 + 0.2, z = z }, cw, cd\nend\n\n-- The TTS board mesh is not square, and until a real image loads there is no\n-- aspect ratio to derive one from. Measure the board and stretch it back to a\n-- square footprint so one grid cell is the same size along X and Z.\nfunction squareUpBoard(board)\n    local b = board.getBoundsNormalized()\n    local s = board.getScale()\n    if b.size.x <= 0.01 or b.size.z <= 0.01 or s.x <= 0 or s.z <= 0 then\n        broadcastToAll(\"Could not measure the board. Is the image imported?\", {1,0.6,0.2})\n        return false\n    end\n\n    local perX = b.size.x / s.x        -- world units per unit of scale\n    local perZ = b.size.z / s.z\n    if perX <= 0.001 or perZ <= 0.001 then return false end\n\n    local wantZ = b.size.x / perZ      -- keep the current width, match the depth to it\n    if wantZ <= 0 or wantZ > 1000 then\n        broadcastToAll(\"Board measurement looks wrong; leaving its size alone.\", {1,0.6,0.2})\n        return false\n    end\n    if math.abs(wantZ - s.z) < 0.005 then return false end\n\n    board.setLock(false)\n    board.setScale({ s.x, s.y, wantZ })\n    board.setLock(true)\n    return true\nend\n\nDECK_ROW = { \"Draw Deck\", \"Ghost Deck\", \"Key Deck\",\n             \"Allegiance Deck\", \"Character Cards\", \"Killer Cards\" }\n\n-- Spread the decks in a row just off the board's near edge, so they never\n-- land on top of the plan whatever size the board ends up.\nfunction layoutDecks(board)\n    local b = board.getBounds()\n    local z = b.center.z - b.size.z / 2 - 4.5\n    local y = b.center.y + b.size.y / 2 + 1.2\n    local gap = math.max(3.2, b.size.x / 7)\n    local x0 = b.center.x - gap * (#DECK_ROW - 1) / 2\n\n    for i, nick in ipairs(DECK_ROW) do\n        local d = findByNick(nick)\n        if d ~= nil then\n            d.setPositionSmooth({ x0 + (i - 1) * gap, y, z })\n            d.setRotationSmooth({ 0, 180, 180 })\n        end\n    end\n\n    -- dice sit to the left of the deck row\n    local dice = { {\"Movement d6\", -2.6}, {\"Killer d10\", -1.1} }\n    for _, v in ipairs(dice) do\n        local o = findByNick(v[1])\n        if o ~= nil then o.setPositionSmooth({ x0 + v[2] * gap / 2 - gap, y, z }) end\n    end\n\n    for i, o in ipairs(refs) do\n        o.setPositionSmooth({ b.center.x + (i - (#refs + 1) / 2) * 5.2,\n                              y, z - 6.5 })\n        o.setRotationSmooth({ 0, 0, 0 })\n    end\n\n    -- pawns start in the Foyer\n    local pawns = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName():match(\" pawn$\") then pawns[#pawns+1] = o end\n    end\n    for i, o in ipairs(pawns) do\n        local col = FOYER.c + ((i - 1) % FOYER.w)\n        local row = FOYER.r + math.floor((i - 1) / FOYER.w)\n        local p = cellToWorld(board, col, row)\n        o.setPositionSmooth({ p.x, p.y + 1.5, p.z })\n    end\nend\n\n-- Prints what TTS actually reports, so a misbehaving board can be diagnosed\n-- instead of guessed at.\nfunction btnDiagnose()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'.\", {1,0.4,0.3})\n        return\n    end\n    local b  = board.getBounds()\n    local bn = board.getBoundsNormalized()\n    local s  = board.getScale()\n    indexZones()\n    local n = 0\n    for _ in pairs(zoneGUID) do n = n + 1 end\n\n    local L = {\n        \"--- BOARD ---\",\n        \"name       : \" .. tostring(board.getName()),\n        \"type       : \" .. tostring(board.type),\n        \"scale      : \" .. string.format(\"%.2f, %.2f, %.2f\", s.x, s.y, s.z),\n        \"bounds     : \" .. string.format(\"%.2f x %.2f x %.2f\", b.size.x, b.size.y, b.size.z),\n        \"normalised : \" .. string.format(\"%.2f x %.2f x %.2f\", bn.size.x, bn.size.y, bn.size.z),\n        \"square?    : \" .. (math.abs(bn.size.x - bn.size.z) < 0.05 and \"yes\" or \"NO\"),\n        \"cell size  : \" .. string.format(\"%.3f x %.3f\", b.size.x / GRID, b.size.z / GRID),\n        \"zones found: \" .. n .. \" of \" .. (#ROOMS + 1),\n    }\n    print(table.concat(L, \"\\n\"))\n    broadcastToAll(\"Board report printed to chat.\", {0.72,0.82,0.94})\nend\n\nfunction alignZones(quiet)\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'. Rename the board and align again.\", {1,0.4,0.3})\n        return\n    end\n\n    if squareUpBoard(board) then\n        if not quiet then\n            broadcastToAll(\"Board squared up.\", {0.7,0.85,1})\n        end\n        Wait.time(function() placeZones(board, quiet) end, 0.5)\n        return\n    end\n    placeZones(board, quiet)\nend\n\nfunction placeZones(board, quiet)\n    indexZones()\n\n    local all = {}\n    for _, R in ipairs(ROOMS) do all[#all+1] = R end\n    all[#all+1] = FOYER\n\n    local snaps, placed = {}, 0\n    for _, R in ipairs(all) do\n        local z = zoneOf(R.id)\n        local _, cw, cd = cellToWorld(board, 0, 0)\n        local pos = cellToWorld(board, R.c + R.w / 2 - 0.5, R.r + R.h / 2 - 0.5)\n        if z ~= nil then\n            z.setPosition(pos)\n            z.setRotation({0, 0, 0})\n            z.setScale({ cw * R.w, 3, cd * R.h })\n            placed = placed + 1\n        end\n        local sp = cellToWorld(board, R.cc, R.cr)\n        snaps[#snaps+1] = { position = sp, rotation = {0,0,0}, rotation_snap = true }\n    end\n\n    Global.setSnapPoints(snaps)\n\n    layoutDecks(board)\n\n    -- park the control block clear of the board's left edge, so it can never\n    -- end up hidden underneath a board that got scaled up\n    local ctrl = findByNick(CONTROL_NICK)\n    if ctrl ~= nil then\n        local b = board.getBounds()\n        ctrl.setLock(false)\n        ctrl.setPosition({ b.center.x - b.size.x / 2 - 3.5,\n                           b.center.y + b.size.y / 2 + 0.6,\n                           b.center.z })\n        ctrl.setRotation({0, 0, 0})\n        ctrl.setLock(true)\n    end\n\n    if not quiet then\n        broadcastToAll(placed .. \" of \" .. #all .. \" room zones aligned.\", {0.7,0.85,1})\n    end\n    if placed < #all then\n        broadcastToAll(\"Missing zones. Each scripting zone must be named exactly as its room.\", {1,0.7,0.3})\n    end\nend\n\n--=============================================================\n--  Keys \u2014 gather all ten, reshuffle, deal one face-down per room\n--=============================================================\nfunction keyCardsInPlay()\n    local found = {}\n    for _, R in ipairs(ROOMS) do\n        local z = zoneOf(R.id)\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then found[#found+1] = o end\n            end\n        end\n    end\n    return found\nend\n\nfunction btnReshuffleKeys()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then broadcastToAll(\"Board not found.\", {1,0.4,0.3}) return end\n\n    local cards = keyCardsInPlay()\n    if #cards == 0 then\n        broadcastToAll(\"No cards tagged KeyCard are sitting in the rooms.\", {1,0.7,0.3})\n        return\n    end\n\n    broadcastToAll(\"The house rearranges itself...\", {0.72,0.72,1})\n\n    -- stack them all on one spot so they merge into a deck\n    local drop = cellToWorld(board, FOYER.cc, FOYER.cr)\n    drop.y = drop.y + 3\n    for i, c in ipairs(cards) do\n        c.setLock(false)\n        c.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })\n        c.setRotationSmooth({ 0, 180, 180 })\n    end\n\n    Wait.time(function() collectAndDeal(drop, #cards) end, 2.5)\nend\n\nfunction collectAndDeal(drop, expected)\n    local deck = nil\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Deck\" and o.hasTag(\"KeyCard\") then\n            local p = o.getPosition()\n            if math.abs(p.x - drop.x) < 3 and math.abs(p.z - drop.z) < 3 then deck = o end\n        end\n    end\n\n    if deck == nil then\n        broadcastToAll(\"The key cards did not merge into a deck. Nudge them together and reshuffle.\", {1,0.6,0.2})\n        return\n    end\n\n    deck.shuffle()\n    Wait.time(function() dealKeys(deck) end, 1)\nend\n\nfunction dealKeys(deck)\n    local board = findByNick(BOARD_NICK)\n    for i, R in ipairs(ROOMS) do\n        Wait.time(function()\n            if deck ~= nil and not deck.isDestroyed() then\n                local p = cellToWorld(board, R.cc, R.cr)\n                deck.takeObject({\n                    position = { p.x, p.y + 1.5, p.z },\n                    rotation = { 0, 180, 180 },\n                    smooth   = true\n                })\n            end\n        end, i * 0.25)\n    end\n    Wait.time(function()\n        broadcastToAll(\"Ten keys hidden. Nobody knows where.\", {0.72,0.72,1})\n    end, #ROOMS * 0.25 + 0.5)\nend\n\n--=============================================================\n--  Ghost sight \u2014 the dead see every key, privately\n--=============================================================\nfunction btnPeekKeys(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then return end\n    if not GHOSTS[colour] then\n        broadcastToColor(\"Only the dead see the house for what it is.\", colour, {1,0.45,0.45})\n        return\n    end\n    local lines = { \"--- THE KEYS ---\" }\n    for _, R in ipairs(ROOMS) do\n        local z, what = zoneOf(R.id), \"(empty)\"\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then what = o.getName() end\n            end\n        end\n        lines[#lines+1] = R.name .. \": \" .. what\n    end\n    broadcastToColor(table.concat(lines, \"\\n\"), colour, {0.6,0.9,1})\nend\n\nfunction makeGhost(colour)\n    GHOSTS[colour] = true\n    buildUI()\n    broadcastToAll(colour .. \" has died.\", {0.6,0.6,0.6})\n    broadcastToColor(\"You are a ghost. Draw an Allegiance card and a secret objective, then use Ghost sight.\",\n                     colour, {0.6,0.9,1})\nend\n\nfunction reviveAll()\n    GHOSTS = {}\n    buildUI()\n    broadcastToAll(\"Ghost list cleared.\", {0.7,0.7,0.7})\nend\n\n--=============================================================\n--  Rounds and the killer\n--=============================================================\nfunction btnEndTurn(a, b)\n    if Turns.enable then\n        Turns.turn_color = Turns.getNextTurnColor()\n    else\n        broadcastToAll(\"Turn order is off. Use 'Start turns' first.\", {1,0.7,0.3})\n    end\nend\n\nfunction btnStartTurns()\n    local seats = seatedColours()\n    if #seats == 0 then\n        broadcastToAll(\"Nobody is seated.\", {1,0.7,0.3})\n        return\n    end\n    Turns.enable = true\n    Turns.type = 2               -- custom order\n    Turns.order = seats\n    Turns.turn_color = seats[1]\n    currentRound = 1\n    broadcastToAll(\"Turn order set: \" .. table.concat(seats, \", \"), {0.72,0.82,0.94})\n    buildUI()\nend\n\n-- Fires when the active seat changes. previousPlayer has just finished a turn.\nfunction onPlayerTurn(player, previousPlayer)\n    if previousPlayer ~= nil and killerSlayer ~= nil\n       and previousPlayer.color == killerSlayer then\n        slayerTurns = slayerTurns + 1\n        if slayerTurns >= 2 then\n            broadcastToAll(\"The killer returns, at FULL Health.\", {1,0.25,0.25})\n            killerSlayer = nil\n            slayerTurns  = 0\n            KILLER_HP    = KILLER_MAX\n        else\n            broadcastToAll(\"The killer stays away for one more of \" ..\n                           killerSlayer .. \"'s turns.\", {0.62,0.62,0.62})\n        end\n    end\n\n    local seats = Turns.order\n    if seats ~= nil and #seats > 0 and player ~= nil and player.color == seats[1] then\n        currentRound = currentRound + 1\n        broadcastToAll(\"Round \" .. currentRound, {1,1,1})\n    end\n    buildUI()\nend\n\nfunction btnKillerDriven(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then\n        broadcastToAll(\"Could not tell who drove the killer off.\", {1,0.7,0.3})\n        return\n    end\n    killerSlayer = colour\n    slayerTurns  = 0\n    KILLER_HP    = 0\n    broadcastToAll(colour .. \" drove the killer off. +1 VP. It returns at full Health \"\n                   .. \"once \" .. colour .. \" has played two more turns.\", {0.45,1,0.55})\n    buildUI()\nend\n\n--=============================================================\n--  Controls\n--=============================================================\n\n--=============================================================\n--  Screen UI \u2014 controls panel and the health tracker.\n--  All of it is built here in Lua rather than baked into the save,\n--  so the health rows can follow who is actually seated.\n--=============================================================\nHEALTH      = {}          -- seat colour -> current health\nKILLER_HP   = 8\nKILLER_MAX  = 8\nMAXES       = { 6, 8, 10 }\n\nSEAT_ORDER = { \"White\",\"Brown\",\"Red\",\"Orange\",\"Yellow\",\"Green\",\n               \"Teal\",\"Blue\",\"Purple\",\"Pink\",\"Grey\",\"Black\" }\n\nSEAT_HEX = {\n    White=\"#F2F5F8\", Brown=\"#8B5E3C\", Red=\"#C0392B\", Orange=\"#D4791F\",\n    Yellow=\"#C9A227\", Green=\"#3F8B5B\", Teal=\"#2E8B8B\", Blue=\"#3A6FB0\",\n    Purple=\"#6B5B8C\", Pink=\"#C46A94\", Grey=\"#7A8894\", Black=\"#3A424C\"\n}\n\nfunction seatedColours()\n    local out = {}\n    for _, p in ipairs(Player.getPlayers()) do\n        if p.seated then out[#out+1] = p.color end\n    end\n    table.sort(out, function(a, b)\n        local ia, ib = 99, 99\n        for i, c in ipairs(SEAT_ORDER) do\n            if c == a then ia = i end\n            if c == b then ib = i end\n        end\n        return ia < ib\n    end)\n    return out\nend\n\nfunction esc(s) return tostring(s):gsub(\"&\",\"&amp;\"):gsub(\"<\",\"&lt;\"):gsub(\">\",\"&gt;\"):gsub('\"',\"&quot;\") end\n\nfunction hpRow(label, hex, value, tag, extra)\n    return table.concat({\n      '<HorizontalLayout preferredHeight=\"30\" spacing=\"3\">',\n        '<Text fontSize=\"13\" color=\"', hex, '\" alignment=\"MiddleLeft\" preferredWidth=\"66\">', esc(label), '</Text>',\n        '<Button onClick=\"hpAdjust(', tag, '|-1)\" fontSize=\"16\" preferredWidth=\"26\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">-</Button>',\n        '<Text fontSize=\"16\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredWidth=\"34\">', tostring(value), '</Text>',\n        '<Button onClick=\"hpAdjust(', tag, '|1)\" fontSize=\"16\" preferredWidth=\"26\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">+</Button>',\n        extra or '',\n      '</HorizontalLayout>'\n    })\nend\n\nfunction buildUI()\n    local seats = seatedColours()\n    local rows = {}\n\n    for _, c in ipairs(seats) do\n        if HEALTH[c] == nil then HEALTH[c] = 5 end\n        local dead = GHOSTS[c] and \"  (ghost)\" or \"\"\n        rows[#rows+1] = hpRow(c .. dead, SEAT_HEX[c] or \"#DCE8F2\", HEALTH[c], c)\n    end\n    if #seats == 0 then\n        rows[#rows+1] = '<Text fontSize=\"12\" color=\"#8FA2B5\" alignment=\"MiddleCenter\" preferredHeight=\"40\">Sit in a seat, then press Refresh seats</Text>'\n    end\n\n    rows[#rows+1] = '<Text fontSize=\"11\" color=\"#5A7086\" alignment=\"MiddleCenter\" preferredHeight=\"16\">THE KILLER</Text>'\n    rows[#rows+1] = hpRow(\"Killer\", \"#C0392B\", KILLER_HP .. \"/\" .. KILLER_MAX, \"KILLER\",\n        '<Button onClick=\"cycleKillerMax\" fontSize=\"10\" preferredWidth=\"34\" color=\"#8FA2B5\" textColor=\"#0F1924\">max</Button>')\n\n    local panelH = 108 + math.max(1, #seats) * 33\n\n    local xml = table.concat({\n    '<Panel id=\"hauntedControls\" rectAlignment=\"UpperLeft\" offsetXY=\"16 -16\" width=\"212\" height=\"372\" color=\"#152232F0\" outlineColor=\"#93A9BE\" outline=\"1 1\">',\n      '<VerticalLayout padding=\"12 12 10 12\" spacing=\"6\" childForceExpandHeight=\"false\">',\n        '<Text fontSize=\"15\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredHeight=\"24\">KILLER MANSION</Text>',\n        '<Button onClick=\"btnReshuffleKeys\" fontSize=\"14\" preferredHeight=\"36\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Reshuffle keys</Button>',\n        '<Button onClick=\"btnPeekKeys\" fontSize=\"14\" preferredHeight=\"36\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Ghost sight</Button>',\n        '<Button onClick=\"btnKillerDriven\" fontSize=\"14\" preferredHeight=\"36\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Killer driven off</Button>',\n        '<Button onClick=\"btnEndTurn\" fontSize=\"14\" preferredHeight=\"36\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">End turn</Button>',\n        '<Button onClick=\"btnStartTurns\" fontSize=\"12\" preferredHeight=\"28\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Start turns</Button>',\n        '<Button onClick=\"btnAlign\" fontSize=\"13\" preferredHeight=\"32\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Align to board</Button>',\n        '<Button onClick=\"btnDiagnose\" fontSize=\"13\" preferredHeight=\"30\" color=\"#8FA2B5\" textColor=\"#0F1924\">Board report</Button>',\n      '</VerticalLayout>',\n    '</Panel>',\n    '<Panel id=\"hauntedHealth\" rectAlignment=\"UpperRight\" offsetXY=\"-16 -16\" width=\"228\" height=\"', tostring(panelH), '\" color=\"#152232F0\" outlineColor=\"#93A9BE\" outline=\"1 1\">',\n      '<VerticalLayout padding=\"10 10 8 10\" spacing=\"3\" childForceExpandHeight=\"false\">',\n        '<Text fontSize=\"14\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredHeight=\"22\">HEALTH</Text>',\n        table.concat(rows),\n        '<Button onClick=\"btnRefreshSeats\" fontSize=\"11\" preferredHeight=\"24\" color=\"#8FA2B5\" textColor=\"#0F1924\">Refresh seats</Button>',\n      '</VerticalLayout>',\n    '</Panel>'\n    })\n\n    UI.setXml(xml)\nend\n\nfunction hpAdjust(player, value, id)\n    local who, delta = value:match(\"^(.-)|(-?%d+)$\")\n    if who == nil then return end\n    delta = tonumber(delta)\n    if who == \"KILLER\" then\n        KILLER_HP = math.max(0, math.min(KILLER_MAX, KILLER_HP + delta))\n        if KILLER_HP == 0 then\n            broadcastToAll(\"The killer is at 0 Health \u2014 use 'Killer driven off'.\", {1,0.5,0.4})\n        end\n    else\n        HEALTH[who] = math.max(0, (HEALTH[who] or 5) + delta)\n        if HEALTH[who] == 0 then\n            broadcastToAll(who .. \" is at 0 Health.\", {0.85,0.4,0.4})\n        end\n    end\n    buildUI()\nend\n\nfunction cycleKillerMax()\n    local i = 1\n    for n, v in ipairs(MAXES) do if v == KILLER_MAX then i = n end end\n    KILLER_MAX = MAXES[(i % #MAXES) + 1]\n    KILLER_HP = KILLER_MAX\n    broadcastToAll(\"Killer set to \" .. KILLER_MAX .. \" Health.\", {0.85,0.55,0.5})\n    buildUI()\nend\n\nfunction btnRefreshSeats()\n    buildUI()\n    broadcastToAll(#seatedColours() .. \" players seated.\", {0.72,0.82,0.94})\nend\n\nfunction onPlayerChangeColor() Wait.time(buildUI, 0.4) end\n\nfunction buildButtons()\n    local host = findByNick(CONTROL_NICK)\n    if host == nil then return end\n    host.clearButtons()\n    local defs = {\n        { \"btnReshuffleKeys\", \"Reshuffle keys\",  -1.05 },\n        { \"btnPeekKeys\",      \"Ghost sight\",     -0.35 },\n        { \"btnKillerDriven\",  \"Killer driven off\", 0.35 },\n        { \"btnEndRound\",      \"End round\",        1.05 },\n    }\n    for _, d in ipairs(defs) do\n        host.createButton({\n            click_function = d[1], function_owner = Global, label = d[2],\n            position = { 0, 0.3, d[3] }, width = 1500, height = 500,\n            font_size = 170, color = {0.93,0.95,0.97}, font_color = {0.1,0.13,0.17}\n        })\n    end\n    host.createButton({\n        click_function = \"btnAlign\", function_owner = Global, label = \"Align to board\",\n        position = { 0, 0.3, 1.75 }, width = 1500, height = 400,\n        font_size = 150, color = {0.80,0.84,0.88}, font_color = {0.1,0.13,0.17}\n    })\nend\n\nfunction btnAlign() alignZones(false) end\n",
  "LuaScriptState": "",
- "XmlUI": "<Panel id=\"hauntedControls\" rectAlignment=\"UpperLeft\" offsetXY=\"16 -16\"\n       width=\"212\" height=\"336\" color=\"#152232F0\"\n       outlineColor=\"#93A9BE\" outline=\"1 1\">\n  <VerticalLayout padding=\"12 12 10 12\" spacing=\"6\" childForceExpandHeight=\"false\">\n    <Text fontSize=\"15\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredHeight=\"24\">HAUNTED</Text>\n    <Button onClick=\"btnReshuffleKeys\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">Reshuffle keys</Button>\n    <Button onClick=\"btnPeekKeys\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">Ghost sight</Button>\n    <Button onClick=\"btnKillerDriven\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">Killer driven off</Button>\n    <Button onClick=\"btnEndRound\" fontSize=\"14\" preferredHeight=\"36\"\n            color=\"#E9EEF3\" textColor=\"#1B2C3E\">End round</Button>\n    <Button onClick=\"btnAlign\" fontSize=\"13\" preferredHeight=\"32\"\n            color=\"#B7C4D2\" textColor=\"#1B2C3E\">Align to board</Button>\n    <Button onClick=\"btnDiagnose\" fontSize=\"13\" preferredHeight=\"30\"\n            color=\"#8FA2B5\" textColor=\"#0F1924\">Board report</Button>\n  </VerticalLayout>\n</Panel>",
+ "XmlUI": "",
  "ObjectStates": [
   {
    "GUID": "4e6bcd",
@@ -118,7 +31,7 @@
     "scaleZ": 7
    },
    "Nickname": "Thornfield Manor",
-   "Description": "Paste your board image URL, then click Align to board on the control block.",
+   "Description": "Board loads from GitHub. Click Align to board after loading.",
    "GMNotes": "",
    "AltLookAngle": {
     "x": 0,
@@ -148,7 +61,7 @@
    "LuaScriptState": "",
    "XmlUI": "",
    "CustomImage": {
-    "ImageURL": "PASTE_YOUR_BOARD_IMAGE_URL_HERE",
+    "ImageURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/thornfield-board.png",
     "ImageSecondaryURL": "",
     "ImageScalar": 1.0,
     "WidthScale": 0.0,
@@ -656,34 +569,27 @@
    "XmlUI": ""
   },
   {
-   "GUID": "365a85",
-   "Name": "Bag",
+   "GUID": "3ae680",
+   "Name": "Deck",
    "Transform": {
-    "posX": -14,
-    "posY": 1.5,
-    "posZ": 5,
+    "posX": -9.0,
+    "posY": 2.2,
+    "posZ": -14,
     "rotX": 0,
-    "rotY": 0,
-    "rotZ": 0,
+    "rotY": 180,
+    "rotZ": 180,
     "scaleX": 1,
     "scaleY": 1,
     "scaleZ": 1
    },
-   "Nickname": "Key Cards - staging",
-   "Description": "Put the 10 Key Cards here at setup, tagged KeyCard, then deal them out.",
+   "Nickname": "Draw Deck",
+   "Description": "44 cards",
    "GMNotes": "",
-   "AltLookAngle": {
-    "x": 0,
-    "y": 0,
-    "z": 0
-   },
    "ColorDiffuse": {
-    "r": 0.66,
-    "g": 0.52,
-    "b": 0.18
+    "r": 0.713,
+    "g": 0.713,
+    "b": 0.713
    },
-   "LayoutGroupSortIndex": 0,
-   "Value": 0,
    "Locked": false,
    "Grid": true,
    "Snap": true,
@@ -694,14 +600,6446 @@
    "Sticky": true,
    "Tooltip": true,
    "GridProjection": false,
-   "HideWhenFaceDown": false,
+   "HideWhenFaceDown": true,
    "Hands": false,
+   "SidewaysCard": false,
+   "DeckIDs": [
+    100,
+    101,
+    101,
+    101,
+    102,
+    102,
+    102,
+    103,
+    103,
+    103,
+    104,
+    105,
+    105,
+    106,
+    106,
+    107,
+    107,
+    108,
+    108,
+    108,
+    109,
+    110,
+    110,
+    110,
+    111,
+    111,
+    112,
+    112,
+    113,
+    113,
+    114,
+    114,
+    115,
+    116,
+    117,
+    117,
+    118,
+    118,
+    119,
+    119,
+    120,
+    120,
+    121,
+    121
+   ],
+   "CustomDeck": {
+    "1": {
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+     "NumWidth": 5,
+     "NumHeight": 5,
+     "BackIsHidden": true,
+     "UniqueBack": false,
+     "Type": 0
+    }
+   },
+   "ContainedObjects": [
+    {
+     "GUID": "8880f9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Backpack",
+     "Description": "Carry 2 extra items (5 total). Does not count toward your carry limit",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 100,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "fd83ec",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Bandage",
+     "Description": "Heal 1 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 101,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "b68fac",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Bandage",
+     "Description": "Heal 1 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 101,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "bb01a8",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Bandage",
+     "Description": "Heal 1 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 101,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "480139",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Bat",
+     "Description": "Deal 1 damage. +1 to Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 102,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "ac827c",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Bat",
+     "Description": "Deal 1 damage. +1 to Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 102,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "2413ac",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Bat",
+     "Description": "Deal 1 damage. +1 to Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 102,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "d6d36c",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Chocolate",
+     "Description": "Heal 1 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 103,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "aa00b9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Chocolate",
+     "Description": "Heal 1 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 103,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "667c02",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Chocolate",
+     "Description": "Heal 1 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 103,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "4c34a7",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Crucifix",
+     "Description": "+3 to run from the Vampire or Killer Doll",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 104,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "de1dab",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Epinephrine",
+     "Description": "Revive a player to 3 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 105,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "89f080",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Epinephrine",
+     "Description": "Revive a player to 3 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 105,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "e76d67",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Fire Poker",
+     "Description": "Deal 2 damage. +1 to Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 106,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0a23a0",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Fire Poker",
+     "Description": "Deal 2 damage. +1 to Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 106,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "f6dbe0",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Flashlight",
+     "Description": "+1 to Search",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 107,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "82a436",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Flashlight",
+     "Description": "+1 to Search",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 107,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "ccc01a",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Hammer",
+     "Description": "Deal 1 damage",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 108,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "558e9e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Hammer",
+     "Description": "Deal 1 damage",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 108,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "6fe311",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Hammer",
+     "Description": "Deal 1 damage",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 108,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0f069c",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Holy Water",
+     "Description": "Deal 5 extra damage to the Vampire, Werewolf, or Killer Doll",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 109,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "7bddb2",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Knife",
+     "Description": "Deal 2 damage",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 110,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "162793",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Knife",
+     "Description": "Deal 2 damage",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 110,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "fce19c",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Knife",
+     "Description": "Deal 2 damage",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 110,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "200ac2",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Lantern",
+     "Description": "+1 to Search",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 111,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "781bbf",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Lantern",
+     "Description": "+1 to Search",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 111,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "35ec5e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Medic Pack",
+     "Description": "Heal 3 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 112,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "84eba9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Medic Pack",
+     "Description": "Heal 3 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 112,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "53bac9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Pain Killers",
+     "Description": "Heal 2 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 113,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "c34ecc",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Pain Killers",
+     "Description": "Heal 2 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 113,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "85be45",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "See a Ghost",
+     "Description": "Drop all items. Costs 1 action to pick up each item. They stay on the floor until every player leaves the room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 114,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "c9c7a9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "See a Ghost",
+     "Description": "Drop all items. Costs 1 action to pick up each item. They stay on the floor until every player leaves the room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 114,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "a66acc",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Silver Stake",
+     "Description": "Deal 8 extra damage to the Werewolf",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 115,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "cd2746",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Small Bag",
+     "Description": "Carry 1 extra item (4 total). Does not count toward your carry limit",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 116,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "888ca3",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Step on a Creaky Floor",
+     "Description": "Add 1 to the Killer roll in this room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 117,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "c9a1d9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Step on a Creaky Floor",
+     "Description": "Add 1 to the Killer roll in this room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 117,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "92a53e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Step on a Squeaky Teddy Bear",
+     "Description": "Add 1 to the Killer roll in this room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 118,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0f4891",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Step on a Squeaky Teddy Bear",
+     "Description": "Add 1 to the Killer roll in this room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 118,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "462070",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Strange Tonic",
+     "Description": "Heal 2 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 119,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "06140e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Strange Tonic",
+     "Description": "Heal 2 health",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 119,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "e95bc2",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Trip!",
+     "Description": "Drop all items. Costs 1 action to pick up each item. They stay on the floor until every player leaves the room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 120,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "fd8920",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Trip!",
+     "Description": "Drop all items. Costs 1 action to pick up each item. They stay on the floor until every player leaves the room",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 120,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "769484",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Wind-Up Clock",
+     "Description": "Play to distract the killer in two turns; the killer won't appear that turn",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 121,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "cb2b25",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Wind-Up Clock",
+     "Description": "Play to distract the killer in two turns; the killer won't appear that turn",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 121,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "1": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "NumWidth": 5,
+       "NumHeight": 5,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    }
+   ],
    "LuaScript": "",
    "LuaScriptState": "",
    "XmlUI": "",
-   "Bag": {
-    "Order": 0
-   }
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0
+  },
+  {
+   "GUID": "dbe8cd",
+   "Name": "Deck",
+   "Transform": {
+    "posX": -5.4,
+    "posY": 2.2,
+    "posZ": -14,
+    "rotX": 0,
+    "rotY": 180,
+    "rotZ": 180,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Ghost Deck",
+   "Description": "30 cards",
+   "GMNotes": "",
+   "ColorDiffuse": {
+    "r": 0.713,
+    "g": 0.713,
+    "b": 0.713
+   },
+   "Locked": false,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": true,
+   "Hands": false,
+   "SidewaysCard": false,
+   "DeckIDs": [
+    200,
+    200,
+    201,
+    201,
+    201,
+    201,
+    202,
+    202,
+    203,
+    203,
+    204,
+    204,
+    204,
+    204,
+    205,
+    205,
+    206,
+    206,
+    207,
+    207,
+    208,
+    208,
+    209,
+    210,
+    210,
+    211,
+    211,
+    212,
+    212,
+    212
+   ],
+   "CustomDeck": {
+    "2": {
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+     "NumWidth": 4,
+     "NumHeight": 4,
+     "BackIsHidden": true,
+     "UniqueBack": false,
+     "Type": 0
+    }
+   },
+   "ContainedObjects": [
+    {
+     "GUID": "a21ebd",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Chill in the Air",
+     "Description": "Choose a room. The next player to enter must make the Killer roll immediately on entry.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 200,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "8d5c00",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Chill in the Air",
+     "Description": "Choose a room. The next player to enter must make the Killer roll immediately on entry.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 200,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "92fa9b",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Cold Spot",
+     "Description": "Choose a room. Subtract 2 from the next Killer roll made there \u2014 the killer is less likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 201,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "f125f6",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Cold Spot",
+     "Description": "Choose a room. Subtract 2 from the next Killer roll made there \u2014 the killer is less likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 201,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "1c76e8",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Cold Spot",
+     "Description": "Choose a room. Subtract 2 from the next Killer roll made there \u2014 the killer is less likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 201,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "80a648",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Cold Spot",
+     "Description": "Choose a room. Subtract 2 from the next Killer roll made there \u2014 the killer is less likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 201,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "40dd01",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Familiar Halls",
+     "Description": "A chosen player may return to the room they just left, or stay put, without facing the killer on their next turn",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 202,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "6c342a",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Familiar Halls",
+     "Description": "A chosen player may return to the room they just left, or stay put, without facing the killer on their next turn",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 202,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "5cb847",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Floating Objects",
+     "Description": "Switch the Key cards between two rooms",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 203,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "29a0c7",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Floating Objects",
+     "Description": "Switch the Key cards between two rooms",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 203,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "bf4e9e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Glowing Room",
+     "Description": "Choose a room. Add 2 to the next Killer roll made there \u2014 the killer is more likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 204,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "89c183",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Glowing Room",
+     "Description": "Choose a room. Add 2 to the next Killer roll made there \u2014 the killer is more likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 204,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "f23603",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Glowing Room",
+     "Description": "Choose a room. Add 2 to the next Killer roll made there \u2014 the killer is more likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 204,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "e2907d",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Glowing Room",
+     "Description": "Choose a room. Add 2 to the next Killer roll made there \u2014 the killer is more likely to appear",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 204,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "a6ab6d",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Grave Chill",
+     "Description": "Choose a player to get -2 on their next Run or Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 205,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "9cfc87",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Grave Chill",
+     "Description": "Choose a player to get -2 on their next Run or Fight",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 205,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "62199e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Locked Door",
+     "Description": "Seal a doorway for one round",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 206,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "4794d0",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Locked Door",
+     "Description": "Seal a doorway for one round",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 206,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "7a2eab",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Poltergeist",
+     "Description": "Switch the Key cards between two rooms",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 207,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0e1a34",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Poltergeist",
+     "Description": "Switch the Key cards between two rooms",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 207,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "519d9d",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Possess",
+     "Description": "Take control of a living player's entire turn.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 208,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "207a67",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Possess",
+     "Description": "Take control of a living player's entire turn.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 208,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "f000e1",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Restless Spirit",
+     "Description": "The killer does not heal for 2 turns",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 209,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "5f4400",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Second Sight",
+     "Description": "Choose a player to get +2 on their next Search",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 210,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0de1ec",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Second Sight",
+     "Description": "Choose a player to get +2 on their next Search",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 210,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "26d77e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Slam the Door",
+     "Description": "Choose a player to immediately leave their room into the hallway",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 211,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "06ad05",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Slam the Door",
+     "Description": "Choose a player to immediately leave their room into the hallway",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 211,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "5d40c9",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Spook!",
+     "Description": "Choose a room. All players in the chosen room drop their items.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 212,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "dab9e0",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Spook!",
+     "Description": "Choose a room. All players in the chosen room drop their items.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 212,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "fd0ff3",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Spook!",
+     "Description": "Choose a room. All players in the chosen room drop their items.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 212,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "2": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "NumWidth": 4,
+       "NumHeight": 4,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    }
+   ],
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0
+  },
+  {
+   "GUID": "add128",
+   "Name": "Deck",
+   "Transform": {
+    "posX": -1.7999999999999998,
+    "posY": 2.2,
+    "posZ": -14,
+    "rotX": 0,
+    "rotY": 180,
+    "rotZ": 180,
+    "scaleX": 0.5,
+    "scaleY": 1,
+    "scaleZ": 0.5
+   },
+   "Nickname": "Key Deck",
+   "Description": "10 cards - half size, one per room",
+   "GMNotes": "",
+   "ColorDiffuse": {
+    "r": 0.713,
+    "g": 0.713,
+    "b": 0.713
+   },
+   "Locked": false,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": true,
+   "Hands": false,
+   "SidewaysCard": false,
+   "DeckIDs": [
+    300,
+    300,
+    300,
+    301,
+    301,
+    301,
+    301,
+    301,
+    301,
+    301
+   ],
+   "CustomDeck": {
+    "3": {
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+     "NumWidth": 2,
+     "NumHeight": 1,
+     "BackIsHidden": true,
+     "UniqueBack": false,
+     "Type": 0
+    }
+   },
+   "ContainedObjects": [
+    {
+     "GUID": "468757",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Key",
+     "Description": "Key!",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 300,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "05ab0f",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Key",
+     "Description": "Key!",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 300,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "785560",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Key",
+     "Description": "Key!",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 300,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "fda4c6",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0422df",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "6e457f",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "60fc43",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "9da5b1",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "23406f",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "c690d6",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 0.5,
+      "scaleY": 1,
+      "scaleZ": 0.5
+     },
+     "Nickname": "Not a Key",
+     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 301,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "3": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "NumWidth": 2,
+       "NumHeight": 1,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "Tags": [
+      "KeyCard"
+     ],
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    }
+   ],
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0
+  },
+  {
+   "GUID": "9233aa",
+   "Name": "Deck",
+   "Transform": {
+    "posX": 1.8000000000000007,
+    "posY": 2.2,
+    "posZ": -14,
+    "rotX": 0,
+    "rotY": 180,
+    "rotZ": 180,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Allegiance Deck",
+   "Description": "5 cards",
+   "GMNotes": "",
+   "ColorDiffuse": {
+    "r": 0.713,
+    "g": 0.713,
+    "b": 0.713
+   },
+   "Locked": false,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": true,
+   "Hands": false,
+   "SidewaysCard": false,
+   "DeckIDs": [
+    400,
+    401,
+    402,
+    403,
+    403
+   ],
+   "CustomDeck": {
+    "4": {
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+     "NumWidth": 2,
+     "NumHeight": 2,
+     "BackIsHidden": true,
+     "UniqueBack": false,
+     "Type": 0
+    }
+   },
+   "ContainedObjects": [
+    {
+     "GUID": "6b06ad",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Guardian \u2014 Echoes",
+     "Description": "You win if the group meets its VP threshold. Objective: A key is found in the same room twice (+1 VP)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 400,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "4": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "NumWidth": 2,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "22247d",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Guardian \u2014 Scattered Bones",
+     "Description": "You win if the group meets its VP threshold. Objective: All 3 keys are found in a different rooms (+1 VP)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 401,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "4": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "NumWidth": 2,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "8cb6f6",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Guardian \u2014 Where I Fell",
+     "Description": "You win if the group meets its VP threshold. Objective: A key must be found in the room where you died (+1 VP)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 402,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "4": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "NumWidth": 2,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "9f9b79",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Malevolent",
+     "Description": "You win if the group fails to meet its VP threshold.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 403,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "4": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "NumWidth": 2,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "736353",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Malevolent",
+     "Description": "You win if the group fails to meet its VP threshold.",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 403,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "4": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "NumWidth": 2,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    }
+   ],
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0
+  },
+  {
+   "GUID": "d58e78",
+   "Name": "Deck",
+   "Transform": {
+    "posX": 5.4,
+    "posY": 2.2,
+    "posZ": -14,
+    "rotX": 0,
+    "rotY": 180,
+    "rotZ": 180,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Character Cards",
+   "Description": "5 cards",
+   "GMNotes": "",
+   "ColorDiffuse": {
+    "r": 0.713,
+    "g": 0.713,
+    "b": 0.713
+   },
+   "Locked": false,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": true,
+   "Hands": false,
+   "SidewaysCard": false,
+   "DeckIDs": [
+    500,
+    501,
+    502,
+    503,
+    504
+   ],
+   "CustomDeck": {
+    "5": {
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+     "NumWidth": 3,
+     "NumHeight": 2,
+     "BackIsHidden": true,
+     "UniqueBack": false,
+     "Type": 0
+    }
+   },
+   "ContainedObjects": [
+    {
+     "GUID": "1bf76b",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Athlete",
+     "Description": "Bravery - High (+2 Fight) | Wits - Low (no bonus) | Health - High (7)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 500,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "5": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "NumWidth": 3,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "46b4c1",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Caretaker",
+     "Description": "Bravery - Low (no bonus) | Wits - High (+2 Search/Run) | Health - High (7)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 501,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "5": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "NumWidth": 3,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "7921bd",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Detective",
+     "Description": "Bravery - High (+2 Fight) | Wits - High (+2 Search/Run) | Health - Low (5)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 502,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "5": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "NumWidth": 3,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "8e1db7",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Movie Star",
+     "Description": "Bravery - Medium (+1 Fight) | Wits - Medium (+1 Search/Run) | Health - High (7)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 503,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "5": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "NumWidth": 3,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "8d0b5e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Priest",
+     "Description": "Bravery High - (+2 Fight) | Wits - Medium (+1 Search/Run) | Health - Medium (6)",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 504,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "5": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "NumWidth": 3,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    }
+   ],
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0
+  },
+  {
+   "GUID": "43f75d",
+   "Name": "Deck",
+   "Transform": {
+    "posX": 9.0,
+    "posY": 2.2,
+    "posZ": -14,
+    "rotX": 0,
+    "rotY": 180,
+    "rotZ": 180,
+    "scaleX": 1,
+    "scaleY": 1,
+    "scaleZ": 1
+   },
+   "Nickname": "Killer Cards",
+   "Description": "9 cards",
+   "GMNotes": "",
+   "ColorDiffuse": {
+    "r": 0.713,
+    "g": 0.713,
+    "b": 0.713
+   },
+   "Locked": false,
+   "Grid": true,
+   "Snap": true,
+   "IgnoreFoW": false,
+   "MeasureMovement": false,
+   "DragSelectable": true,
+   "Autoraise": true,
+   "Sticky": true,
+   "Tooltip": true,
+   "GridProjection": false,
+   "HideWhenFaceDown": true,
+   "Hands": false,
+   "SidewaysCard": false,
+   "DeckIDs": [
+    600,
+    601,
+    602,
+    603,
+    604,
+    605,
+    606,
+    607,
+    608
+   ],
+   "CustomDeck": {
+    "6": {
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+     "NumWidth": 3,
+     "NumHeight": 3,
+     "BackIsHidden": true,
+     "UniqueBack": false,
+     "Type": 0
+    }
+   },
+   "ContainedObjects": [
+    {
+     "GUID": "275e3e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Chainsaw",
+     "Description": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 10",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 600,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "19d352",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Clown",
+     "Description": "Terrifying | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 601,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "202101",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "El Cucuy",
+     "Description": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 602,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "0bba22",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Killer Doll",
+     "Description": "Very Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 603,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "7abd12",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Serial Killer",
+     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 604,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "ccf159",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Trench Coat Killer",
+     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 605,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "950449",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Vampire",
+     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 10",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 606,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "ecd808",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Werewolf",
+     "Description": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 607,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    },
+    {
+     "GUID": "726e5e",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1,
+      "scaleY": 1,
+      "scaleZ": 1
+     },
+     "Nickname": "Zombie",
+     "Description": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 6",
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "Hands": true,
+     "CardID": 608,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0
+    }
+   ],
+   "LuaScript": "",
+   "LuaScriptState": "",
+   "XmlUI": "",
+   "AltLookAngle": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+   },
+   "LayoutGroupSortIndex": 0,
+   "Value": 0
   }
  ]
 }
