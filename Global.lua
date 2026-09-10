@@ -62,12 +62,21 @@ function onLoad(saved)
         end
     end
     Wait.time(function()
-        indexZones()
-        alignZones(true)
-        buildButtons()
+        -- Build the panel FIRST. If anything below fails, the controls are
+        -- still there and the failure is visible instead of silent.
         buildUI()
+        buildButtons()
+
+        local ok, err = pcall(function()
+            indexZones()
+            alignZones(true)
+        end)
+        if not ok then
+            broadcastToAll("Setup error during align — use the Align to board button.", {1,0.5,0.3})
+            print("Killer Mansion setup error: " .. tostring(err))
+        end
+
         broadcastToAll("Killer Mansion ready. Controls are the panel at the top-left of your screen.", {0.72,0.82,0.94})
-        broadcastToAll("Import your board image, then click Align to board.", {0.62,0.72,0.84})
     end, 1)
 end
 
@@ -194,12 +203,6 @@ function layoutDecks(board)
     for _, v in ipairs(dice) do
         local o = findByNick(v[1])
         if o ~= nil then o.setPositionSmooth({ x0 + v[2] * gap / 2 - gap, y, z }) end
-    end
-
-    for i, o in ipairs(refs) do
-        o.setPositionSmooth({ b.center.x + (i - (#refs + 1) / 2) * 5.2,
-                              y, z - 6.5 })
-        o.setRotationSmooth({ 0, 0, 0 })
     end
 
     -- pawns start in the Foyer
