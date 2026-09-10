@@ -1,0 +1,344 @@
+{
+ "draw": [
+  {
+   "name": "Backpack",
+   "desc": "Carry 2 extra items (5 total). Does not count toward your carry limit",
+   "type": "Tool",
+   "count": 1
+  },
+  {
+   "name": "Bandage",
+   "desc": "Heal 1 health",
+   "type": "Healing",
+   "count": 3
+  },
+  {
+   "name": "Bat",
+   "desc": "Deal 1 damage. +1 to Fight",
+   "type": "Weapon",
+   "count": 3
+  },
+  {
+   "name": "Chocolate",
+   "desc": "Heal 1 health",
+   "type": "Healing",
+   "count": 3
+  },
+  {
+   "name": "Crucifix",
+   "desc": "+3 to run from the Vampire or Killer Doll",
+   "type": "Anti-Killer",
+   "count": 1
+  },
+  {
+   "name": "Epinephrine",
+   "desc": "Revive a player to 3 health",
+   "type": "Healing",
+   "count": 2
+  },
+  {
+   "name": "Fire Poker",
+   "desc": "Deal 2 damage. +1 to Fight",
+   "type": "Weapon",
+   "count": 2
+  },
+  {
+   "name": "Flashlight",
+   "desc": "+1 to Search",
+   "type": "Utility",
+   "count": 2
+  },
+  {
+   "name": "Hammer",
+   "desc": "Deal 1 damage",
+   "type": "Weapon",
+   "count": 3
+  },
+  {
+   "name": "Holy Water",
+   "desc": "Deal 5 extra damage to the Vampire, Werewolf, or Killer Doll",
+   "type": "Anti-Killer",
+   "count": 1
+  },
+  {
+   "name": "Knife",
+   "desc": "Deal 2 damage",
+   "type": "Weapon",
+   "count": 3
+  },
+  {
+   "name": "Lantern",
+   "desc": "+1 to Search",
+   "type": "Utility",
+   "count": 2
+  },
+  {
+   "name": "Medic Pack",
+   "desc": "Heal 3 health",
+   "type": "Healing",
+   "count": 2
+  },
+  {
+   "name": "Pain Killers",
+   "desc": "Heal 2 health",
+   "type": "Healing",
+   "count": 2
+  },
+  {
+   "name": "See a Ghost",
+   "desc": "Drop all items. Costs 1 action to pick up each item. They stay on the floor until every player leaves the room",
+   "type": "Event",
+   "count": 2
+  },
+  {
+   "name": "Silver Stake",
+   "desc": "Deal 8 extra damage to the Werewolf",
+   "type": "Anti-Killer",
+   "count": 1
+  },
+  {
+   "name": "Small Bag",
+   "desc": "Carry 1 extra item (4 total). Does not count toward your carry limit",
+   "type": "Tool",
+   "count": 1
+  },
+  {
+   "name": "Step on a Creaky Floor",
+   "desc": "Add 1 to the Killer roll in this room",
+   "type": "Event",
+   "count": 2
+  },
+  {
+   "name": "Step on a Squeaky Teddy Bear",
+   "desc": "Add 1 to the Killer roll in this room",
+   "type": "Event",
+   "count": 2
+  },
+  {
+   "name": "Strange Tonic",
+   "desc": "Heal 2 health",
+   "type": "Healing",
+   "count": 2
+  },
+  {
+   "name": "Trip!",
+   "desc": "Drop all items. Costs 1 action to pick up each item. They stay on the floor until every player leaves the room",
+   "type": "Event",
+   "count": 2
+  },
+  {
+   "name": "Wind-Up Clock",
+   "desc": "Play to distract the killer in two turns; the killer won't appear that turn",
+   "type": "Utility",
+   "count": 2
+  }
+ ],
+ "ghost": [
+  {
+   "name": "Chill in the Air",
+   "desc": "Choose a room. The next player to enter must make the Killer roll immediately on entry.",
+   "type": "Killer Control",
+   "count": 2
+  },
+  {
+   "name": "Cold Spot",
+   "desc": "Choose a room. Subtract 2 from the next Killer roll made there — the killer is less likely to appear",
+   "type": "Killer Control",
+   "count": 4
+  },
+  {
+   "name": "Familiar Halls",
+   "desc": "A chosen player may return to the room they just left, or stay put, without facing the killer on their next turn",
+   "type": "Board",
+   "count": 2
+  },
+  {
+   "name": "Floating Objects",
+   "desc": "Switch the Key cards between two rooms",
+   "type": "Board",
+   "count": 2
+  },
+  {
+   "name": "Glowing Room",
+   "desc": "Choose a room. Add 2 to the next Killer roll made there — the killer is more likely to appear",
+   "type": "Killer Control",
+   "count": 4
+  },
+  {
+   "name": "Grave Chill",
+   "desc": "Choose a player to get -2 on their next Run or Fight",
+   "type": "Interference",
+   "count": 2
+  },
+  {
+   "name": "Locked Door",
+   "desc": "Seal a doorway for one round",
+   "type": "Board",
+   "count": 2
+  },
+  {
+   "name": "Poltergeist",
+   "desc": "Switch the Key cards between two rooms",
+   "type": "Board",
+   "count": 2
+  },
+  {
+   "name": "Possess",
+   "desc": "Take control of a living player's entire turn.",
+   "type": "Control",
+   "count": 2
+  },
+  {
+   "name": "Restless Spirit",
+   "desc": "The killer does not heal for 2 turns",
+   "type": "Killer Control",
+   "count": 1
+  },
+  {
+   "name": "Second Sight",
+   "desc": "Choose a player to get +2 on their next Search",
+   "type": "Interference",
+   "count": 2
+  },
+  {
+   "name": "Slam the Door",
+   "desc": "Choose a player to immediately leave their room into the hallway",
+   "type": "Board",
+   "count": 2
+  },
+  {
+   "name": "Spook!",
+   "desc": "Choose a room. All players in the chosen room drop their items.",
+   "type": "Interference",
+   "count": 3
+  }
+ ],
+ "key": [
+  {
+   "name": "Key",
+   "desc": "Key!",
+   "type": "Key",
+   "count": 3
+  },
+  {
+   "name": "Not a Key",
+   "desc": "No key here. You find something else instead: draw 1 card from the Draw deck",
+   "type": "Key",
+   "count": 9
+  }
+ ],
+ "allegiance": [
+  {
+   "name": "Guardian — Echoes",
+   "desc": "You win if the group meets its VP threshold. Objective: A key is found in the same room twice (+1 VP)",
+   "type": "Guardian",
+   "count": 1
+  },
+  {
+   "name": "Guardian — Scattered Bones",
+   "desc": "You win if the group meets its VP threshold. Objective: All 3 keys are found in a different rooms (+1 VP)",
+   "type": "Guardian",
+   "count": 1
+  },
+  {
+   "name": "Guardian — Where I Fell",
+   "desc": "You win if the group meets its VP threshold. Objective: A key must be found in the room where you died (+1 VP)",
+   "type": "Guardian",
+   "count": 1
+  },
+  {
+   "name": "Malevolent",
+   "desc": "You win if the group fails to meet its VP threshold.",
+   "type": "Malevolent",
+   "count": 2
+  }
+ ],
+ "character": [
+  {
+   "name": "Athlete",
+   "desc": "Bravery - High (+2 Fight) | Wits - Low (no bonus) | Health - High (7)",
+   "type": "Character",
+   "count": 1
+  },
+  {
+   "name": "Caretaker",
+   "desc": "Bravery - Low (no bonus) | Wits - High (+2 Search/Run) | Health - High (7)",
+   "type": "Character",
+   "count": 1
+  },
+  {
+   "name": "Detective",
+   "desc": "Bravery - High (+2 Fight) | Wits - High (+2 Search/Run) | Health - Low (5)",
+   "type": "Character",
+   "count": 1
+  },
+  {
+   "name": "Movie Star",
+   "desc": "Bravery - Medium (+1 Fight) | Wits - Medium (+1 Search/Run) | Health - High (7)",
+   "type": "Character",
+   "count": 1
+  },
+  {
+   "name": "Priest",
+   "desc": "Bravery High - (+2 Fight) | Wits - Medium (+1 Search/Run) | Health - Medium (6)",
+   "type": "Character",
+   "count": 1
+  }
+ ],
+ "killer": [
+  {
+   "name": "Chainsaw",
+   "desc": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 10",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Clown",
+   "desc": "Terrifying | Difficulty - Medium (Appears on 6-10) | Health - 8",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "El Cucuy",
+   "desc": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Killer Doll",
+   "desc": "Very Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Serial Killer",
+   "desc": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Trench Coat Killer",
+   "desc": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Vampire",
+   "desc": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 10",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Werewolf",
+   "desc": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
+   "type": "Killer",
+   "count": 1
+  },
+  {
+   "name": "Zombie",
+   "desc": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 6",
+   "type": "Killer",
+   "count": 1
+  }
+ ]
+}

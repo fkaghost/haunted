@@ -12,7 +12,7 @@
  "Sky": "Sky_Museum",
  "Note": "Thornfield Manor. Click Align to board after loading.",
  "Rules": "",
- "LuaScript": "--=============================================================\n--  KILLER MANSION  \u00b7  Thornfield Manor\n--  Global script \u2014 board alignment, key reshuffle, ghost sight,\n--  round tracking and killer removal.\n--\n--  On load this positions every scripting zone over its room by\n--  measuring the board, so the board can be moved, rotated in 90-degree\n--  steps or rescaled and the zones will follow. If anything drifts,\n--  click \"Align to board\" on the control block.\n--=============================================================\n\nBOARD_NICK   = \"Thornfield Manor\"\nCONTROL_NICK = \"Haunted Controls\"\n\nGRID = 20\n\n-- If the plan comes out mirrored front-to-back, flip this and re-align.\nROW0_IS_FAR = true\n\n-- Room rectangles in grid cells: c,r = top-left of the largest rectangle\n-- that fits inside the room; w,h = its size; cc,cr = the centre cell where\n-- that room's Key Card is dealt.\nROOMS = {\n    { id=\"Kitchen\", name=\"Kitchen\", c=15, r=15, w=5, h=5, cc=17, cr=17 },\n    { id=\"Guestroom\", name=\"Guestroom\", c=0, r=15, w=3, h=5, cc=1, cr=17 },\n    { id=\"Parlour\", name=\"Parlour\", c=0, r=0, w=4, h=6, cc=1, cr=2 },\n    { id=\"Library\", name=\"Library\", c=15, r=8, w=5, h=5, cc=17, cr=10 },\n    { id=\"Study\", name=\"Study\", c=6, r=0, w=4, h=5, cc=8, cr=2 },\n    { id=\"DiningRoom\", name=\"Dining Room\", c=10, r=14, w=2, h=6, cc=11, cr=17 },\n    { id=\"Conservatory\", name=\"Conservatory\", c=17, r=0, w=3, h=6, cc=18, cr=2 },\n    { id=\"Lounge\", name=\"Lounge\", c=5, r=15, w=3, h=5, cc=6, cr=17 },\n    { id=\"Ballroom\", name=\"Ballroom\", c=0, r=8, w=6, h=5, cc=2, cr=10 },\n    { id=\"Bedroom\", name=\"Bedroom\", c=12, r=0, w=3, h=6, cc=13, cr=2 },\n}\n\nFOYER = { id=\"Foyer\", name=\"Foyer\", c=8, r=8, w=4, h=5, cc=9, cr=10 }\n\nROOM_ORDER = {}\nfor i, v in ipairs(ROOMS) do ROOM_ORDER[i] = v.id end\n\n--=============================================================\n--  State\n--=============================================================\nzoneGUID     = {}      -- room id -> scripting zone GUID\nGHOSTS       = {}      -- player colour -> true\ncurrentRound = 1\nkillerSlayer = nil     -- seat colour of whoever drove the killer off\nslayerTurns  = 0       -- completed turns by that player since\n\nfunction onLoad(saved)\n    if saved and saved ~= \"\" then\n        local ok, s = pcall(function() return JSON.decode(saved) end)\n        if ok and s then\n            zoneGUID     = s.zoneGUID or {}\n            GHOSTS       = s.GHOSTS or {}\n            currentRound = s.currentRound or 1\n            killerSlayer = s.killerSlayer\n            slayerTurns  = s.slayerTurns or 0\n            TRACK        = s.TRACK\n            nextTrackId  = s.nextTrackId or 1\n            KILLER_HP    = s.KILLER_HP or 8\n        end\n    end\n    Wait.time(function()\n        -- Build the panel FIRST. If anything below fails, the controls are\n        -- still there and the failure is visible instead of silent.\n        buildUI()\n        buildButtons()\n\n        local ok, err = pcall(function()\n            indexZones()\n            alignZones(true)\n        end)\n        if not ok then\n            broadcastToAll(\"Setup error during align \u2014 use the Align to board button.\", {1,0.5,0.3})\n            print(\"Killer Mansion setup error: \" .. tostring(err))\n        end\n\n        broadcastToAll(\"Killer Mansion ready. Controls are the panel at the top-left of your screen.\", {0.72,0.82,0.94})\n    end, 1)\nend\n\nfunction onSave()\n    return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,\n                         currentRound=currentRound, killerSlayer=killerSlayer, slayerTurns=slayerTurns,\n                         TRACK=TRACK, nextTrackId=nextTrackId, KILLER_HP=KILLER_HP })\nend\n\nfunction findByNick(nick)\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName() == nick then return o end\n    end\n    return nil\nend\n\nfunction indexZones()\n    zoneGUID = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Scripting\" then\n            local n = o.getName()\n            for _, R in ipairs(ROOMS) do\n                if n == R.id then zoneGUID[R.id] = o.getGUID() end\n            end\n            if n == FOYER.id then zoneGUID[FOYER.id] = o.getGUID() end\n        end\n    end\nend\n\nfunction zoneOf(id)\n    local g = zoneGUID[id]\n    return g and getObjectFromGUID(g) or nil\nend\n\n--=============================================================\n--  Click plumbing\n--  Object buttons call back as (object, playerColour, altClick).\n--  Screen-panel buttons call back as (player, value, elementId).\n--  This works out who clicked either way.\n--=============================================================\nSEAT_COLOURS = {\n    White=true, Brown=true, Red=true, Orange=true, Yellow=true, Green=true,\n    Teal=true, Blue=true, Purple=true, Pink=true, Grey=true, Black=true\n}\n\nfunction clickerColour(a, b)\n    if type(b) == \"string\" and SEAT_COLOURS[b] then return b end\n    if type(a) == \"table\" or type(a) == \"userdata\" then\n        local ok, col = pcall(function() return a.color end)\n        if ok and type(col) == \"string\" and SEAT_COLOURS[col] then return col end\n    end\n    if type(b) == \"string\" and b ~= \"\" then return b end\n    return nil\nend\n\n--=============================================================\n--  Alignment \u2014 everything is derived from the board's own bounds,\n--  so no hand-typed coordinates and no guessing at TTS units.\n--=============================================================\nfunction cellToWorld(board, col, row)\n    local b  = board.getBounds()\n    local cw = b.size.x / GRID\n    local cd = b.size.z / GRID\n    local x  = b.center.x - b.size.x / 2 + (col + 0.5) * cw\n    local z\n    if ROW0_IS_FAR then\n        z = b.center.z + b.size.z / 2 - (row + 0.5) * cd\n    else\n        z = b.center.z - b.size.z / 2 + (row + 0.5) * cd\n    end\n    return { x = x, y = b.center.y + b.size.y / 2 + 0.2, z = z }, cw, cd\nend\n\n-- The TTS board mesh is not square, and until a real image loads there is no\n-- aspect ratio to derive one from. Measure the board and stretch it back to a\n-- square footprint so one grid cell is the same size along X and Z.\nfunction squareUpBoard(board)\n    local b = board.getBoundsNormalized()\n    local s = board.getScale()\n    if b.size.x <= 0.01 or b.size.z <= 0.01 or s.x <= 0 or s.z <= 0 then\n        broadcastToAll(\"Could not measure the board. Is the image imported?\", {1,0.6,0.2})\n        return false\n    end\n\n    local perX = b.size.x / s.x        -- world units per unit of scale\n    local perZ = b.size.z / s.z\n    if perX <= 0.001 or perZ <= 0.001 then return false end\n\n    local wantZ = b.size.x / perZ      -- keep the current width, match the depth to it\n    if wantZ <= 0 or wantZ > 1000 then\n        broadcastToAll(\"Board measurement looks wrong; leaving its size alone.\", {1,0.6,0.2})\n        return false\n    end\n    if math.abs(wantZ - s.z) < 0.005 then return false end\n\n    board.setLock(false)\n    board.setScale({ s.x, s.y, wantZ })\n    board.setLock(true)\n    return true\nend\n\nDECK_ROW = { \"Draw Deck\", \"Ghost Deck\", \"Key Deck\",\n             \"Allegiance Deck\", \"Character Cards\", \"Killer Cards\" }\n\n-- Spread the decks in a row just off the board's near edge, so they never\n-- land on top of the plan whatever size the board ends up.\nfunction layoutDecks(board)\n    local b = board.getBounds()\n    local z = b.center.z - b.size.z / 2 - 4.5\n    local y = b.center.y + b.size.y / 2 + 1.2\n    local gap = math.max(3.2, b.size.x / 7)\n    local x0 = b.center.x - gap * (#DECK_ROW - 1) / 2\n\n    for i, nick in ipairs(DECK_ROW) do\n        local d = findByNick(nick)\n        if d ~= nil then\n            d.setPositionSmooth({ x0 + (i - 1) * gap, y, z })\n            d.setRotationSmooth({ 0, 180, 180 })\n        end\n    end\n\n    -- dice sit to the left of the deck row\n    local dice = { {\"Movement d6\", -2.6}, {\"Killer d10\", -1.1} }\n    for _, v in ipairs(dice) do\n        local o = findByNick(v[1])\n        if o ~= nil then o.setPositionSmooth({ x0 + v[2] * gap / 2 - gap, y, z }) end\n    end\n\n    -- pawns start in the Foyer\n    local pawns = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName():match(\" pawn$\") then pawns[#pawns+1] = o end\n    end\n    for i, o in ipairs(pawns) do\n        local col = FOYER.c + ((i - 1) % FOYER.w)\n        local row = FOYER.r + math.floor((i - 1) / FOYER.w)\n        local p = cellToWorld(board, col, row)\n        o.setPositionSmooth({ p.x, p.y + 1.5, p.z })\n    end\nend\n\n-- Prints what TTS actually reports, so a misbehaving board can be diagnosed\n-- instead of guessed at.\nfunction btnDiagnose()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'.\", {1,0.4,0.3})\n        return\n    end\n    local b  = board.getBounds()\n    local bn = board.getBoundsNormalized()\n    local s  = board.getScale()\n    indexZones()\n    local n = 0\n    for _ in pairs(zoneGUID) do n = n + 1 end\n\n    local L = {\n        \"--- BOARD ---\",\n        \"name       : \" .. tostring(board.getName()),\n        \"type       : \" .. tostring(board.type),\n        \"scale      : \" .. string.format(\"%.2f, %.2f, %.2f\", s.x, s.y, s.z),\n        \"bounds     : \" .. string.format(\"%.2f x %.2f x %.2f\", b.size.x, b.size.y, b.size.z),\n        \"normalised : \" .. string.format(\"%.2f x %.2f x %.2f\", bn.size.x, bn.size.y, bn.size.z),\n        \"square?    : \" .. (math.abs(bn.size.x - bn.size.z) < 0.05 and \"yes\" or \"NO\"),\n        \"cell size  : \" .. string.format(\"%.3f x %.3f\", b.size.x / GRID, b.size.z / GRID),\n        \"zones found: \" .. n .. \" of \" .. (#ROOMS + 1),\n    }\n    print(table.concat(L, \"\\n\"))\n    broadcastToAll(\"Board report printed to chat.\", {0.72,0.82,0.94})\nend\n\nfunction alignZones(quiet)\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'. Rename the board and align again.\", {1,0.4,0.3})\n        return\n    end\n\n    if squareUpBoard(board) then\n        if not quiet then\n            broadcastToAll(\"Board squared up.\", {0.7,0.85,1})\n        end\n        Wait.time(function() placeZones(board, quiet) end, 0.5)\n        return\n    end\n    placeZones(board, quiet)\nend\n\nfunction placeZones(board, quiet)\n    indexZones()\n\n    local all = {}\n    for _, R in ipairs(ROOMS) do all[#all+1] = R end\n    all[#all+1] = FOYER\n\n    local snaps, placed = {}, 0\n    for _, R in ipairs(all) do\n        local z = zoneOf(R.id)\n        local _, cw, cd = cellToWorld(board, 0, 0)\n        local pos = cellToWorld(board, R.c + R.w / 2 - 0.5, R.r + R.h / 2 - 0.5)\n        if z ~= nil then\n            z.setPosition(pos)\n            z.setRotation({0, 0, 0})\n            z.setScale({ cw * R.w, 3, cd * R.h })\n            placed = placed + 1\n        end\n        local sp = cellToWorld(board, R.cc, R.cr)\n        snaps[#snaps+1] = { position = sp, rotation = {0,0,0}, rotation_snap = true }\n    end\n\n    Global.setSnapPoints(snaps)\n\n    layoutDecks(board)\n\n    -- park the control block clear of the board's left edge, so it can never\n    -- end up hidden underneath a board that got scaled up\n    local ctrl = findByNick(CONTROL_NICK)\n    if ctrl ~= nil then\n        local b = board.getBounds()\n        ctrl.setLock(false)\n        ctrl.setPosition({ b.center.x - b.size.x / 2 - 3.5,\n                           b.center.y + b.size.y / 2 + 0.6,\n                           b.center.z })\n        ctrl.setRotation({0, 0, 0})\n        ctrl.setLock(true)\n    end\n\n    if not quiet then\n        broadcastToAll(placed .. \" of \" .. #all .. \" room zones aligned.\", {0.7,0.85,1})\n    end\n    if placed < #all then\n        broadcastToAll(\"Missing zones. Each scripting zone must be named exactly as its room.\", {1,0.7,0.3})\n    end\nend\n\n--=============================================================\n--  Keys \u2014 gather all ten, reshuffle, deal one face-down per room\n--=============================================================\nKEY_PILE_NICK = \"Key Deck\"\n\n-- Every Key Card in the scene: loose ones sitting in rooms, plus the reserve\n-- pile. The pile is just whatever did not fit on the board, so it drains from\n-- 3 spares to 0 as keys are collected, with no bookkeeping.\n-- Cards sitting in the Foyer are collected Keys and are left alone. The Foyer\n-- is the found-keys area: it is the door you are unlocking, and it is never\n-- dealt into, so nothing there is part of the hidden layout.\nfunction foyerGUIDs()\n    local held, z = {}, zoneOf(FOYER.id)\n    if z ~= nil then\n        for _, o in ipairs(z.getObjects()) do held[o.getGUID()] = true end\n    end\n    return held\nend\n\nfunction allKeyObjects()\n    local out, safe = {}, foyerGUIDs()\n    for _, o in ipairs(getAllObjects()) do\n        if not safe[o.getGUID()] then\n            local ok, tagged = pcall(function() return o.hasTag(\"KeyCard\") end)\n            if ok and tagged then\n                out[#out+1] = o\n            elseif o.type == \"Deck\" and o.getName() == KEY_PILE_NICK then\n                out[#out+1] = o\n            end\n        end\n    end\n    return out\nend\n\nfunction foundKeyCount()\n    local n, z = 0, zoneOf(FOYER.id)\n    if z ~= nil then\n        for _, o in ipairs(z.getObjects()) do\n            local ok, t = pcall(function() return o.hasTag(\"KeyCard\") end)\n            if ok and t and o.getName() == \"Key\" then n = n + 1 end\n        end\n    end\n    return n\nend\n\nfunction btnReshuffleKeys()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then broadcastToAll(\"Board not found.\", {1,0.4,0.3}) return end\n\n    local objs = allKeyObjects()\n    if #objs == 0 then\n        broadcastToAll(\"No Key Cards found. They must be tagged KeyCard.\", {1,0.7,0.3})\n        return\n    end\n\n    broadcastToAll(\"The house rearranges itself...\", {0.72,0.72,1})\n\n    -- stack everything on one spot so it merges into a single deck\n    local bb = board.getBounds()\n    local drop = { x = bb.center.x - bb.size.x / 2 - 4,\n                   y = bb.center.y + bb.size.y / 2 + 3,\n                   z = bb.center.z }\n    for i, o in ipairs(objs) do\n        o.setLock(false)\n        o.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })\n        o.setRotationSmooth({ 0, 180, 180 })\n    end\n\n    Wait.time(function() collectAndDeal(drop) end, 2.5)\nend\n\nfunction collectAndDeal(drop)\n    local deck, loose = nil, 0\n    for _, o in ipairs(getAllObjects()) do\n        local p = o.getPosition()\n        if math.abs(p.x - drop.x) < 4 and math.abs(p.z - drop.z) < 4 then\n            if o.type == \"Deck\" then deck = o\n            elseif o.type == \"Card\" then loose = loose + 1 end\n        end\n    end\n\n    if deck == nil then\n        broadcastToAll(\"The Key Cards did not merge into a deck. Nudge them together and reshuffle.\", {1,0.6,0.2})\n        return\n    end\n    if loose > 0 then\n        broadcastToAll(loose .. \" Key Card(s) did not join the pile \u2014 check the Foyer.\", {1,0.7,0.3})\n    end\n\n    deck.setName(KEY_PILE_NICK)\n    deck.shuffle()\n    Wait.time(function() dealKeys(deck) end, 1)\nend\n\nfunction dealKeys(deck)\n    local board = findByNick(BOARD_NICK)\n    local held = deck.getQuantity()\n    if held < #ROOMS then\n        broadcastToAll(\"Only \" .. held .. \" Key Cards for \" .. #ROOMS ..\n                       \" rooms \u2014 some rooms will be empty.\", {1,0.7,0.3})\n    end\n\n    for i, R in ipairs(ROOMS) do\n        Wait.time(function()\n            if deck ~= nil and not deck.isDestroyed() and deck.getQuantity() > 0 then\n                local p = cellToWorld(board, R.cc, R.cr)\n                deck.takeObject({\n                    position = { p.x, p.y + 1.5, p.z },\n                    rotation = { 0, 180, 180 },\n                    smooth   = true\n                })\n            end\n        end, i * 0.25)\n    end\n\n    Wait.time(function()\n        local left = 0\n        local d = findByNick(KEY_PILE_NICK)\n        if d ~= nil and not d.isDestroyed() then\n            local ok, q = pcall(function() return d.getQuantity() end)\n            left = (ok and q and q > 0) and q or 0\n        end\n        local found = foundKeyCount()\n        broadcastToAll(#ROOMS .. \" rooms dealt. \" .. left .. \" spare in reserve. \" ..\n                       found .. \" of 3 keys found.\", {0.72,0.72,1})\n        if found >= 3 then\n            broadcastToAll(\"All three keys are in the Foyer \u2014 the FINAL CHASE begins. \"\n                .. \"Corridors now need a Killer roll too.\", {1,0.3,0.25})\n        end\n    end, #ROOMS * 0.25 + 0.8)\nend\n\n--=============================================================\n--  Ghost sight \u2014 the dead see every key, privately\n--=============================================================\nfunction btnPeekKeys(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then return end\n    if not GHOSTS[colour] then\n        broadcastToColor(\"Only the dead see the house for what it is.\", colour, {1,0.45,0.45})\n        return\n    end\n    local lines = { \"--- THE KEYS ---\" }\n    for _, R in ipairs(ROOMS) do\n        local z, what = zoneOf(R.id), \"(empty)\"\n        if z then\n            for _, o in ipairs(z.getObjects()) do\n                if o.hasTag(\"KeyCard\") then what = o.getName() end\n            end\n        end\n        lines[#lines+1] = R.name .. \": \" .. what\n    end\n    broadcastToColor(table.concat(lines, \"\\n\"), colour, {0.6,0.9,1})\nend\n\n-- A player declares their own death from the panel. Using the clicker's seat\n-- means no name-to-colour mapping is needed, and Ghost sight keys off the same\n-- seat, so the two always agree.\nfunction btnIDied(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then\n        broadcastToAll(\"Sit in a seat first, then declare.\", {1,0.7,0.3})\n        return\n    end\n    if GHOSTS[colour] then\n        broadcastToColor(\"You are already a ghost.\", colour, {0.6,0.9,1})\n        return\n    end\n    makeGhost(colour)\nend\n\nfunction btnClearGhosts()\n    reviveAll()\nend\n\nfunction makeGhost(colour)\n    GHOSTS[colour] = true\n    buildUI()\n    broadcastToAll(colour .. \" has died and is now a ghost.\", {0.6,0.6,0.6})\n    broadcastToColor(\"You are a ghost. Take an Allegiance card, drop everything you carried, \"\n        .. \"then press Ghost sight \u2014 only you will see the result.\", colour, {0.6,0.9,1})\nend\n\nfunction reviveAll()\n    GHOSTS = {}\n    buildUI()\n    broadcastToAll(\"Ghost list cleared.\", {0.7,0.7,0.7})\nend\n\n--=============================================================\n--  Rounds and the killer\n--=============================================================\nfunction btnEndTurn(a, b)\n    if Turns.enable then\n        Turns.turn_color = Turns.getNextTurnColor()\n    else\n        broadcastToAll(\"Turn order is off. Use 'Start turns' first.\", {1,0.7,0.3})\n    end\nend\n\nfunction btnStartTurns()\n    local seats = seatedColours()\n    if #seats == 0 then\n        broadcastToAll(\"Nobody is seated.\", {1,0.7,0.3})\n        return\n    end\n    Turns.enable = true\n    Turns.type = 2               -- custom order\n    Turns.order = seats\n    Turns.turn_color = seats[1]\n    currentRound = 1\n    broadcastToAll(\"Turn order set: \" .. table.concat(seats, \", \"), {0.72,0.82,0.94})\n    buildUI()\nend\n\n-- Fires when the active seat changes. previousPlayer has just finished a turn.\nfunction onPlayerTurn(player, previousPlayer)\n    if previousPlayer ~= nil and killerSlayer ~= nil\n       and previousPlayer.color == killerSlayer then\n        slayerTurns = slayerTurns + 1\n        if slayerTurns >= 2 then\n            broadcastToAll(\"The killer returns, at FULL Health.\", {1,0.25,0.25})\n            killerSlayer = nil\n            slayerTurns  = 0\n            KILLER_HP    = KILLER_MAX\n        else\n            broadcastToAll(\"The killer stays away for one more of \" ..\n                           killerSlayer .. \"'s turns.\", {0.62,0.62,0.62})\n        end\n    end\n\n    local seats = Turns.order\n    if seats ~= nil and #seats > 0 and player ~= nil and player.color == seats[1] then\n        currentRound = currentRound + 1\n        broadcastToAll(\"Round \" .. currentRound, {1,1,1})\n    end\n    buildUI()\nend\n\nfunction btnKillerDriven(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then\n        broadcastToAll(\"Could not tell who drove the killer off.\", {1,0.7,0.3})\n        return\n    end\n    killerSlayer = colour\n    slayerTurns  = 0\n    KILLER_HP    = 0\n    broadcastToAll(colour .. \" drove the killer off. +1 VP. It returns at full Health \"\n                   .. \"once \" .. colour .. \" has played two more turns.\", {0.45,1,0.55})\n    buildUI()\nend\n\n--=============================================================\n--  Controls\n--=============================================================\n\n--=============================================================\n--  Screen UI \u2014 controls panel and the health tracker.\n--  All of it is built here in Lua rather than baked into the save,\n--  so the health rows can follow who is actually seated.\n--=============================================================\nTRACK      = nil     -- ordered list of {id, name, hp}\nnextTrackId = 1\nKILLER_HP  = 8\n\nSEAT_HEX = {\n    White=\"#F2F5F8\", Brown=\"#8B5E3C\", Red=\"#C0392B\", Orange=\"#D4791F\",\n    Yellow=\"#C9A227\", Green=\"#3F8B5B\", Teal=\"#2E8B8B\", Blue=\"#3A6FB0\",\n    Purple=\"#6B5B8C\", Pink=\"#C46A94\", Grey=\"#7A8894\", Black=\"#3A424C\"\n}\nSEAT_ORDER = { \"White\",\"Brown\",\"Red\",\"Orange\",\"Yellow\",\"Green\",\n               \"Teal\",\"Blue\",\"Purple\",\"Pink\",\"Grey\",\"Black\" }\n\nfunction seatedColours()\n    local out = {}\n    for _, p in ipairs(Player.getPlayers()) do\n        if p.seated then out[#out+1] = p.color end\n    end\n    table.sort(out, function(a,b)\n        local ia, ib = 99, 99\n        for i,c in ipairs(SEAT_ORDER) do\n            if c==a then ia=i end\n            if c==b then ib=i end\n        end\n        return ia < ib\n    end)\n    return out\nend\n\nfunction xesc(s)\n    return tostring(s):gsub(\"&\",\"&amp;\"):gsub(\"<\",\"&lt;\"):gsub(\">\",\"&gt;\"):gsub('\"',\"&quot;\")\nend\n\nfunction addTracked(name, hp)\n    TRACK[#TRACK+1] = { id = \"t\" .. nextTrackId, name = name or \"Player\", hp = hp or 5 }\n    nextTrackId = nextTrackId + 1\nend\n\nfunction findTracked(id)\n    for i, t in ipairs(TRACK) do if t.id == id then return t, i end end\n    return nil\nend\n\nfunction seedTrack()\n    TRACK = {}\n    for _, c in ipairs(seatedColours()) do addTracked(c, 5) end\n    if #TRACK == 0 then addTracked(\"Player 1\", 5) end\nend\n\nfunction btnAddPlayer()\n    addTracked(\"Player \" .. (#TRACK + 1), 5)\n    buildUI()\nend\n\nfunction btnAddSeated()\n    local have = {}\n    for _, t in ipairs(TRACK) do have[t.name] = true end\n    local n = 0\n    for _, c in ipairs(seatedColours()) do\n        if not have[c] then addTracked(c, 5); n = n + 1 end\n    end\n    buildUI()\n    broadcastToAll(n .. \" seated player(s) added.\", {0.72,0.82,0.94})\nend\n\nfunction removeTracked(player, value, id)\n    local t, i = findTracked(value)\n    if i then table.remove(TRACK, i) end\n    buildUI()\nend\n\nfunction onNameEdit(player, value, id)\n    local t = findTracked((id or \"\"):gsub(\"^name_\", \"\"))\n    if t then t.name = value end\nend\n\nfunction hpAdjust(player, value, id)\n    local who, delta = tostring(value):match(\"^(.-)|(-?%d+)$\")\n    if who == nil then return end\n    delta = tonumber(delta)\n    if who == \"KILLER\" then\n        KILLER_HP = math.max(0, KILLER_HP + delta)\n        if KILLER_HP == 0 then\n            broadcastToAll(\"The killer is at 0 Health \u2014 use 'Killer driven off'.\", {1,0.5,0.4})\n        end\n    else\n        local t = findTracked(who)\n        if t == nil then return end\n        t.hp = math.max(0, t.hp + delta)\n        if t.hp == 0 then broadcastToAll(t.name .. \" is at 0 Health.\", {0.85,0.4,0.4}) end\n    end\n    buildUI()\nend\n\nfunction hpRow(id, name, hex, value, editable)\n    local label\n    if editable then\n        label = '<InputField id=\"name_' .. id .. '\" text=\"' .. xesc(name) ..\n                '\" onEndEdit=\"onNameEdit\" fontSize=\"13\" textColor=\"' .. hex ..\n                '\" preferredWidth=\"76\" />'\n    else\n        label = '<Text fontSize=\"14\" color=\"' .. hex ..\n                '\" alignment=\"MiddleLeft\" preferredWidth=\"76\">' .. xesc(name) .. '</Text>'\n    end\n    local kill = editable and\n        ('<Button onClick=\"removeTracked(' .. id .. ')\" fontSize=\"12\" preferredWidth=\"20\" ' ..\n         'color=\"#3A424C\" textColor=\"#B7C4D2\">x</Button>') or\n        '<Text preferredWidth=\"20\"> </Text>'\n    return table.concat({\n      '<HorizontalLayout preferredHeight=\"30\" spacing=\"3\">', label,\n      '<Button onClick=\"hpAdjust(', id, '|-1)\" fontSize=\"16\" preferredWidth=\"26\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">-</Button>',\n      '<Text fontSize=\"16\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredWidth=\"30\">', tostring(value), '</Text>',\n      '<Button onClick=\"hpAdjust(', id, '|1)\" fontSize=\"16\" preferredWidth=\"26\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">+</Button>',\n      kill, '</HorizontalLayout>'\n    })\nend\n\nfunction buildUI()\n    if TRACK == nil then seedTrack() end\n\n    local rows = {}\n    for _, t in ipairs(TRACK) do\n        local hex = SEAT_HEX[t.name] or \"#DCE8F2\"\n        if GHOSTS[t.name] then hex = \"#8FA2B5\" end\n        rows[#rows+1] = hpRow(t.id, t.name, hex, t.hp, true)\n    end\n    rows[#rows+1] = '<Text fontSize=\"11\" color=\"#5A7086\" alignment=\"MiddleCenter\" preferredHeight=\"16\">THE KILLER</Text>'\n    rows[#rows+1] = hpRow(\"KILLER\", \"Killer\", \"#E2695E\", KILLER_HP, false)\n\n    local h = 150 + #TRACK * 33\n\n    local xml = table.concat({\n    '<Panel id=\"kmControls\" rectAlignment=\"UpperLeft\" offsetXY=\"16 -16\" width=\"212\" height=\"410\"',\n    ' color=\"#152232F0\" outlineColor=\"#93A9BE\" outline=\"1 1\"',\n    ' allowDragging=\"true\" returnToOriginalPositionWhenReleased=\"false\">',\n      '<VerticalLayout padding=\"12 12 10 12\" spacing=\"6\" childForceExpandHeight=\"false\">',\n        '<Text fontSize=\"14\" color=\"#8FA2B5\" alignment=\"MiddleCenter\" preferredHeight=\"20\">KILLER MANSION  (drag)</Text>',\n        '<Button onClick=\"btnReshuffleKeys\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Reshuffle keys</Button>',\n        '<Button onClick=\"btnIDied\" fontSize=\"14\" preferredHeight=\"34\" color=\"#5A6B7C\" textColor=\"#E9EEF3\">I died</Button>',\n        '<Button onClick=\"btnPeekKeys\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Ghost sight</Button>',\n        '<Button onClick=\"btnKillerDriven\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Killer driven off</Button>',\n        '<Button onClick=\"btnEndTurn\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">End turn</Button>',\n        '<Button onClick=\"btnStartTurns\" fontSize=\"12\" preferredHeight=\"26\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Start turns</Button>',\n        '<Button onClick=\"btnAlign\" fontSize=\"12\" preferredHeight=\"26\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Align to board</Button>',\n        '<HorizontalLayout preferredHeight=\"24\" spacing=\"4\">',\n          '<Button onClick=\"btnClearGhosts\" fontSize=\"11\" color=\"#8FA2B5\" textColor=\"#0F1924\">Clear ghosts</Button>',\n          '<Button onClick=\"btnDiagnose\" fontSize=\"11\" color=\"#8FA2B5\" textColor=\"#0F1924\">Board report</Button>',\n        '</HorizontalLayout>',\n      '</VerticalLayout>',\n    '</Panel>',\n    '<Panel id=\"kmHealth\" rectAlignment=\"UpperRight\" offsetXY=\"-16 -16\" width=\"236\" height=\"', tostring(h), '\"',\n    ' color=\"#152232F0\" outlineColor=\"#93A9BE\" outline=\"1 1\"',\n    ' allowDragging=\"true\" returnToOriginalPositionWhenReleased=\"false\">',\n      '<VerticalLayout padding=\"10 10 8 10\" spacing=\"3\" childForceExpandHeight=\"false\">',\n        '<Text fontSize=\"13\" color=\"#8FA2B5\" alignment=\"MiddleCenter\" preferredHeight=\"20\">HEALTH  (drag)</Text>',\n        table.concat(rows),\n        '<HorizontalLayout preferredHeight=\"26\" spacing=\"4\">',\n          '<Button onClick=\"btnAddPlayer\" fontSize=\"11\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Add player</Button>',\n          '<Button onClick=\"btnAddSeated\" fontSize=\"11\" color=\"#8FA2B5\" textColor=\"#0F1924\">Add seated</Button>',\n        '</HorizontalLayout>',\n      '</VerticalLayout>',\n    '</Panel>'\n    })\n    UI.setXml(xml)\nend\n\nfunction buildButtons()\n    local host = findByNick(CONTROL_NICK)\n    if host == nil then return end\n    host.clearButtons()\n    local defs = {\n        { \"btnReshuffleKeys\", \"Reshuffle keys\",  -1.05 },\n        { \"btnPeekKeys\",      \"Ghost sight\",     -0.35 },\n        { \"btnKillerDriven\",  \"Killer driven off\", 0.35 },\n        { \"btnEndRound\",      \"End round\",        1.05 },\n    }\n    for _, d in ipairs(defs) do\n        host.createButton({\n            click_function = d[1], function_owner = Global, label = d[2],\n            position = { 0, 0.3, d[3] }, width = 1500, height = 500,\n            font_size = 170, color = {0.93,0.95,0.97}, font_color = {0.1,0.13,0.17}\n        })\n    end\n    host.createButton({\n        click_function = \"btnAlign\", function_owner = Global, label = \"Align to board\",\n        position = { 0, 0.3, 1.75 }, width = 1500, height = 400,\n        font_size = 150, color = {0.80,0.84,0.88}, font_color = {0.1,0.13,0.17}\n    })\nend\n\nfunction btnAlign() alignZones(false) end\n",
+ "LuaScript": "--=============================================================\n--  KILLER MANSION  \u00b7  Thornfield Manor\n--  Global script \u2014 board alignment, key reshuffle, ghost sight,\n--  round tracking and killer removal.\n--\n--  On load this positions every scripting zone over its room by\n--  measuring the board, so the board can be moved, rotated in 90-degree\n--  steps or rescaled and the zones will follow. If anything drifts,\n--  click \"Align to board\" on the control block.\n--=============================================================\n\nBOARD_NICK   = \"Thornfield Manor\"\nCONTROL_NICK = \"Haunted Controls\"\n\nGRID = 20\n\n-- If the plan comes out mirrored front-to-back, flip this and re-align.\nROW0_IS_FAR = true\n\n-- Rotate the whole board. 0 or 180. Aligning applies this to the board object\n-- and flips the grid mapping to match, so the zones stay on their rooms.\nBOARD_YAW = 180\n\n-- Room rectangles in grid cells: c,r = top-left of the largest rectangle\n-- that fits inside the room; w,h = its size; cc,cr = the centre cell where\n-- that room's Key Card is dealt.\nROOMS = {\n    { id=\"Kitchen\", name=\"Kitchen\", c=15, r=15, w=5, h=5, cc=17, cr=17 },\n    { id=\"Guestroom\", name=\"Guestroom\", c=0, r=15, w=3, h=5, cc=1, cr=17 },\n    { id=\"Parlour\", name=\"Parlour\", c=0, r=0, w=4, h=6, cc=1, cr=2 },\n    { id=\"Library\", name=\"Library\", c=15, r=8, w=5, h=5, cc=17, cr=10 },\n    { id=\"Study\", name=\"Study\", c=6, r=0, w=4, h=5, cc=8, cr=2 },\n    { id=\"DiningRoom\", name=\"Dining Room\", c=10, r=14, w=2, h=6, cc=11, cr=17 },\n    { id=\"Conservatory\", name=\"Conservatory\", c=17, r=0, w=3, h=6, cc=18, cr=2 },\n    { id=\"Lounge\", name=\"Lounge\", c=5, r=15, w=3, h=5, cc=6, cr=17 },\n    { id=\"Ballroom\", name=\"Ballroom\", c=0, r=8, w=6, h=5, cc=2, cr=10 },\n    { id=\"Bedroom\", name=\"Bedroom\", c=12, r=0, w=3, h=6, cc=13, cr=2 },\n}\n\nFOYER = { id=\"Foyer\", name=\"Foyer\", c=8, r=8, w=4, h=5, cc=9, cr=10 }\n\nROOM_ORDER = {}\nfor i, v in ipairs(ROOMS) do ROOM_ORDER[i] = v.id end\n\n--=============================================================\n--  State\n--=============================================================\nzoneGUID     = {}      -- room id -> scripting zone GUID\nGHOSTS       = {}      -- player colour -> true\ncurrentRound = 1\nkillerSlayer = nil     -- seat colour of whoever drove the killer off\nslayerTurns  = 0       -- completed turns by that player since\n\nfunction onLoad(saved)\n    if saved and saved ~= \"\" then\n        local ok, s = pcall(function() return JSON.decode(saved) end)\n        if ok and s then\n            zoneGUID     = s.zoneGUID or {}\n            GHOSTS       = s.GHOSTS or {}\n            currentRound = s.currentRound or 1\n            killerSlayer = s.killerSlayer\n            slayerTurns  = s.slayerTurns or 0\n            TRACK        = s.TRACK\n            GHOST_VIEW   = s.GHOST_VIEW or {}\n            nextTrackId  = s.nextTrackId or 1\n            KILLER_HP    = s.KILLER_HP or 8\n        end\n    end\n    Wait.time(function()\n        -- Build the panel FIRST. If anything below fails, the controls are\n        -- still there and the failure is visible instead of silent.\n        buildUI()\n        buildButtons()\n\n        local ok, err = pcall(function()\n            indexZones()\n            alignZones(true)\n        end)\n        if not ok then\n            broadcastToAll(\"Setup error during align \u2014 use the Align to board button.\", {1,0.5,0.3})\n            print(\"Killer Mansion setup error: \" .. tostring(err))\n        end\n\n        broadcastToAll(\"Killer Mansion ready. Controls are the panel at the top-left of your screen.\", {0.72,0.82,0.94})\n    end, 1)\nend\n\nfunction onSave()\n    return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,\n                         currentRound=currentRound, killerSlayer=killerSlayer, slayerTurns=slayerTurns,\n                         TRACK=TRACK, nextTrackId=nextTrackId, KILLER_HP=KILLER_HP, GHOST_VIEW=GHOST_VIEW })\nend\n\nfunction findByNick(nick)\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName() == nick then return o end\n    end\n    return nil\nend\n\nfunction indexZones()\n    zoneGUID = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.type == \"Scripting\" then\n            local n = o.getName()\n            for _, R in ipairs(ROOMS) do\n                if n == R.id then zoneGUID[R.id] = o.getGUID() end\n            end\n            if n == FOYER.id then zoneGUID[FOYER.id] = o.getGUID() end\n        end\n    end\nend\n\nfunction zoneOf(id)\n    local g = zoneGUID[id]\n    return g and getObjectFromGUID(g) or nil\nend\n\n--=============================================================\n--  Click plumbing\n--  Object buttons call back as (object, playerColour, altClick).\n--  Screen-panel buttons call back as (player, value, elementId).\n--  This works out who clicked either way.\n--=============================================================\nSEAT_COLOURS = {\n    White=true, Brown=true, Red=true, Orange=true, Yellow=true, Green=true,\n    Teal=true, Blue=true, Purple=true, Pink=true, Grey=true, Black=true\n}\n\nfunction clickerColour(a, b)\n    if type(b) == \"string\" and SEAT_COLOURS[b] then return b end\n    if type(a) == \"table\" or type(a) == \"userdata\" then\n        local ok, col = pcall(function() return a.color end)\n        if ok and type(col) == \"string\" and SEAT_COLOURS[col] then return col end\n    end\n    if type(b) == \"string\" and b ~= \"\" then return b end\n    return nil\nend\n\n--=============================================================\n--  Alignment \u2014 everything is derived from the board's own bounds,\n--  so no hand-typed coordinates and no guessing at TTS units.\n--=============================================================\nfunction cellToWorld(board, col, row)\n    local b  = board.getBounds()\n    local cw = b.size.x / GRID\n    local cd = b.size.z / GRID\n    local flip = (BOARD_YAW == 180)\n\n    local x\n    if flip then\n        x = b.center.x + b.size.x / 2 - (col + 0.5) * cw\n    else\n        x = b.center.x - b.size.x / 2 + (col + 0.5) * cw\n    end\n\n    -- row 0 is the far edge by default; a 180 turn puts it nearest the camera\n    local far = ROW0_IS_FAR\n    if flip then far = not far end\n\n    local z\n    if far then\n        z = b.center.z + b.size.z / 2 - (row + 0.5) * cd\n    else\n        z = b.center.z - b.size.z / 2 + (row + 0.5) * cd\n    end\n\n    return { x = x, y = b.center.y + b.size.y / 2 + 0.2, z = z }, cw, cd\nend\n\n-- The TTS board mesh is not square, and until a real image loads there is no\n-- aspect ratio to derive one from. Measure the board and stretch it back to a\n-- square footprint so one grid cell is the same size along X and Z.\nfunction squareUpBoard(board)\n    local b = board.getBoundsNormalized()\n    local s = board.getScale()\n    if b.size.x <= 0.01 or b.size.z <= 0.01 or s.x <= 0 or s.z <= 0 then\n        broadcastToAll(\"Could not measure the board. Is the image imported?\", {1,0.6,0.2})\n        return false\n    end\n\n    local perX = b.size.x / s.x        -- world units per unit of scale\n    local perZ = b.size.z / s.z\n    if perX <= 0.001 or perZ <= 0.001 then return false end\n\n    local wantZ = b.size.x / perZ      -- keep the current width, match the depth to it\n    if wantZ <= 0 or wantZ > 1000 then\n        broadcastToAll(\"Board measurement looks wrong; leaving its size alone.\", {1,0.6,0.2})\n        return false\n    end\n    if math.abs(wantZ - s.z) < 0.005 then return false end\n\n    board.setLock(false)\n    board.setScale({ s.x, s.y, wantZ })\n    board.setLock(true)\n    return true\nend\n\nDECK_ROW = { \"Draw Deck\", \"Ghost Deck\", \"Key Deck\",\n             \"Allegiance Deck\", \"Character Cards\", \"Killer Cards\" }\n\n-- Spread the decks in a row just off the board's near edge, so they never\n-- land on top of the plan whatever size the board ends up.\nfunction layoutDecks(board)\n    local b = board.getBounds()\n    local z = b.center.z - b.size.z / 2 - 4.5\n    local y = b.center.y + b.size.y / 2 + 1.2\n    local gap = math.max(3.2, b.size.x / 7)\n    local x0 = b.center.x - gap * (#DECK_ROW - 1) / 2\n\n    for i, nick in ipairs(DECK_ROW) do\n        local d = findByNick(nick)\n        if d ~= nil then\n            d.setPositionSmooth({ x0 + (i - 1) * gap, y, z })\n            d.setRotationSmooth({ 0, 180, 180 })\n        end\n    end\n\n    -- dice sit to the left of the deck row\n    local dice = { {\"Movement d6\", -2.6}, {\"Killer d10\", -1.1} }\n    for _, v in ipairs(dice) do\n        local o = findByNick(v[1])\n        if o ~= nil then o.setPositionSmooth({ x0 + v[2] * gap / 2 - gap, y, z }) end\n    end\n\n    -- pawns start in the Foyer\n    local pawns = {}\n    for _, o in ipairs(getAllObjects()) do\n        if o.getName():match(\" pawn$\") then pawns[#pawns+1] = o end\n    end\n    for i, o in ipairs(pawns) do\n        local col = FOYER.c + ((i - 1) % FOYER.w)\n        local row = FOYER.r + math.floor((i - 1) / FOYER.w)\n        local p = cellToWorld(board, col, row)\n        o.setPositionSmooth({ p.x, p.y + 1.5, p.z })\n    end\nend\n\n-- Prints what TTS actually reports, so a misbehaving board can be diagnosed\n-- instead of guessed at.\n-- Prints the real state of every room: is its zone indexed, what is sitting in\n-- it, and how many cards are in the pool and reserve. Use this when a room\n-- comes up empty and it is not obvious why.\nfunction btnKeyReport()\n    local L = { \"--- ROOM BY ROOM ---\" }\n    local missing = 0\n    for i, R in ipairs(ROOMS) do\n        local z = zoneOf(R.id)\n        local what\n        if z == nil then\n            what = \"ZONE NOT FOUND\"\n        else\n            local names = {}\n            for _, o in ipairs(z.getObjects()) do\n                local ok, t = pcall(function() return o.hasTag(\"KeyCard\") end)\n                if ok and t then names[#names+1] = o.getName() end\n            end\n            if #names == 0 then what = \"(empty)\"; missing = missing + 1\n            else what = table.concat(names, \" + \") end\n        end\n        L[#L+1] = string.format(\"%2d. %-14s %s\", i, R.name, what)\n    end\n\n    local res = reservePile()\n    local rq = 0\n    if res ~= nil then\n        local ok, q = pcall(function() return res.getQuantity() end)\n        rq = (ok and q) or 0\n    end\n    L[#L+1] = \"\"\n    L[#L+1] = \"cards in rooms : \" .. #roomKeyCards() .. \" of \" .. #ROOMS\n    L[#L+1] = \"empty rooms    : \" .. missing\n    L[#L+1] = \"reserve pile   : \" .. rq\n    L[#L+1] = \"keys found     : \" .. foundKeyCount()\n\n    -- anything tagged that is not in a room and not in the reserve\n    local stray = {}\n    local inRoom = {}\n    for _, o in ipairs(roomKeyCards()) do inRoom[o.getGUID()] = true end\n    for _, o in ipairs(getAllObjects()) do\n        if not inRoom[o.getGUID()] and o.type == \"Card\" then\n            local ok, t = pcall(function() return o.hasTag(\"KeyCard\") end)\n            if ok and t then stray[#stray+1] = o.getName() end\n        end\n    end\n    L[#L+1] = \"loose off-board: \" .. #stray ..\n              (#stray > 0 and (\"  (\" .. table.concat(stray, \", \") .. \")\") or \"\")\n\n    print(table.concat(L, \"\\n\"))\n    broadcastToAll(\"Room report printed to chat.\", {0.72,0.82,0.94})\nend\n\nfunction btnDiagnose()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'.\", {1,0.4,0.3})\n        return\n    end\n    local b  = board.getBounds()\n    local bn = board.getBoundsNormalized()\n    local s  = board.getScale()\n    indexZones()\n    local n = 0\n    for _ in pairs(zoneGUID) do n = n + 1 end\n\n    local L = {\n        \"--- BOARD ---\",\n        \"name       : \" .. tostring(board.getName()),\n        \"type       : \" .. tostring(board.type),\n        \"scale      : \" .. string.format(\"%.2f, %.2f, %.2f\", s.x, s.y, s.z),\n        \"bounds     : \" .. string.format(\"%.2f x %.2f x %.2f\", b.size.x, b.size.y, b.size.z),\n        \"normalised : \" .. string.format(\"%.2f x %.2f x %.2f\", bn.size.x, bn.size.y, bn.size.z),\n        \"square?    : \" .. (math.abs(bn.size.x - bn.size.z) < 0.05 and \"yes\" or \"NO\"),\n        \"cell size  : \" .. string.format(\"%.3f x %.3f\", b.size.x / GRID, b.size.z / GRID),\n        \"zones found: \" .. n .. \" of \" .. (#ROOMS + 1),\n    }\n    print(table.concat(L, \"\\n\"))\n    broadcastToAll(\"Board report printed to chat.\", {0.72,0.82,0.94})\nend\n\nfunction alignZones(quiet)\n    local board = findByNick(BOARD_NICK)\n    if board == nil then\n        broadcastToAll(\"No object named '\" .. BOARD_NICK .. \"'. Rename the board and align again.\", {1,0.4,0.3})\n        return\n    end\n\n    board.setLock(false)\n    board.setRotation({ 0, BOARD_YAW, 0 })\n    board.setLock(true)\n\n    if squareUpBoard(board) then\n        if not quiet then\n            broadcastToAll(\"Board squared up.\", {0.7,0.85,1})\n        end\n        Wait.time(function() placeZones(board, quiet) end, 0.5)\n        return\n    end\n    placeZones(board, quiet)\nend\n\nfunction placeZones(board, quiet)\n    indexZones()\n\n    local all = {}\n    for _, R in ipairs(ROOMS) do all[#all+1] = R end\n    all[#all+1] = FOYER\n\n    local snaps, placed = {}, 0\n    for _, R in ipairs(all) do\n        local z = zoneOf(R.id)\n        local _, cw, cd = cellToWorld(board, 0, 0)\n        local pos = cellToWorld(board, R.c + R.w / 2 - 0.5, R.r + R.h / 2 - 0.5)\n        if z ~= nil then\n            z.setPosition(pos)\n            z.setRotation({0, 0, 0})\n            z.setScale({ cw * R.w, 3, cd * R.h })\n            placed = placed + 1\n        end\n        local sp = cellToWorld(board, R.cc, R.cr)\n        snaps[#snaps+1] = { position = sp, rotation = {0,0,0}, rotation_snap = true }\n    end\n\n    Global.setSnapPoints(snaps)\n\n    layoutDecks(board)\n\n    -- park the control block clear of the board's left edge, so it can never\n    -- end up hidden underneath a board that got scaled up\n    local ctrl = findByNick(CONTROL_NICK)\n    if ctrl ~= nil then\n        local b = board.getBounds()\n        ctrl.setLock(false)\n        ctrl.setPosition({ b.center.x - b.size.x / 2 - 3.5,\n                           b.center.y + b.size.y / 2 + 0.6,\n                           b.center.z })\n        ctrl.setRotation({0, 0, 0})\n        ctrl.setLock(true)\n    end\n\n    if not quiet then\n        broadcastToAll(placed .. \" of \" .. #all .. \" room zones aligned.\", {0.7,0.85,1})\n    end\n    if placed < #all then\n        broadcastToAll(\"Missing zones. Each scripting zone must be named exactly as its room.\", {1,0.7,0.3})\n    end\nend\n\n--=============================================================\n--  Keys \u2014 gather all ten, reshuffle, deal one face-down per room\n--=============================================================\nKEY_PILE_NICK = \"Key Deck\"\n\nKEYS_TOTAL = 3\n\n-- ONLY the cards currently sitting in the ten searchable rooms. Nothing in the\n-- Foyer, nothing in a player's hand, nothing in the reserve pile off the board.\nfunction roomKeyCards()\n    local out = {}\n    for _, R in ipairs(ROOMS) do\n        local z = zoneOf(R.id)\n        if z ~= nil then\n            for _, o in ipairs(z.getObjects()) do\n                local ok, t = pcall(function() return o.hasTag(\"KeyCard\") end)\n                if ok and t then out[#out+1] = o end\n            end\n        end\n    end\n    return out\nend\n\n-- The reserve pile: the Key Deck object, wherever it is parked. Only ever used\n-- to top the board back up to ten after a Key has been collected.\nfunction reservePile()\n    local inRoom = {}\n    for _, o in ipairs(roomKeyCards()) do inRoom[o.getGUID()] = true end\n    for _, o in ipairs(getAllObjects()) do\n        if not inRoom[o.getGUID()] then\n            if o.type == \"Deck\" and o.getName() == KEY_PILE_NICK then\n                local ok, q = pcall(function() return o.getQuantity() end)\n                if ok and q and q > 0 then return o end\n            end\n        end\n    end\n    return nil\nend\n\n-- Keys live in the rooms until someone collects one. Whoever holds it can keep\n-- it wherever they like \u2014 in hand, on a mat, anywhere off the board \u2014 so the\n-- count is simply the three Keys minus however many are still hidden.\nfunction keysStillHidden()\n    local n = 0\n    for _, o in ipairs(roomKeyCards()) do\n        if o.getName() == \"Key\" then n = n + 1 end\n    end\n    return n\nend\n\nfunction foundKeyCount()\n    return math.max(0, KEYS_TOTAL - keysStillHidden())\nend\n\nfunction gatherPoint(board)\n    local b = board.getBounds()\n    return { x = b.center.x - b.size.x / 2 - 4,\n             y = b.center.y + b.size.y / 2 + 3,\n             z = b.center.z }\nend\n\nfunction btnReshuffleKeys()\n    local board = findByNick(BOARD_NICK)\n    if board == nil then broadcastToAll(\"Board not found.\", {1,0.4,0.3}) return end\n\n    local cards = roomKeyCards()\n    if #cards == 0 then\n        broadcastToAll(\"No Key Cards in the rooms. Deal them out first.\", {1,0.7,0.3})\n        return\n    end\n\n    broadcastToAll(\"The house rearranges itself...\", {0.72,0.72,1})\n\n    local drop = gatherPoint(board)\n    for i, o in ipairs(cards) do\n        o.setLock(false)\n        o.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })\n        o.setRotationSmooth({ 0, 180, 180 })\n    end\n\n    Wait.time(function() topUpAndDeal(board, drop, #cards) end, 2.5)\nend\n\n-- If a Key has been collected the board is one card short, so pull exactly the\n-- shortfall from the reserve before shuffling. The reserve is never shuffled\n-- into the pool wholesale \u2014 it only ever replaces what left the board.\nfunction topUpAndDeal(board, drop, gathered)\n    local deck = nil\n    for _, o in ipairs(getAllObjects()) do\n        local p = o.getPosition()\n        if o.type == \"Deck\" and math.abs(p.x - drop.x) < 4 and math.abs(p.z - drop.z) < 4 then\n            deck = o\n        end\n    end\n    if deck == nil then\n        broadcastToAll(\"The Key Cards did not merge into a deck. Nudge them together and reshuffle.\", {1,0.6,0.2})\n        return\n    end\n    deck.setName(\"Key Pool\")\n\n    local short = #ROOMS - gathered\n    if short > 0 then\n        local res = reservePile()\n        if res == nil then\n            broadcastToAll(short .. \" room(s) will be empty \u2014 no reserve pile found. \"\n                .. \"Add a 'Not a Key' card to the board manually.\", {1,0.7,0.3})\n        else\n            local ok, have = pcall(function() return res.getQuantity() end)\n            have = (ok and have) or 0\n            local take = math.min(short, have)\n            for i = 1, take do\n                res.takeObject({ position = { drop.x, drop.y + 2 + i * 0.3, drop.z },\n                                 rotation = { 0, 180, 180 }, smooth = true })\n            end\n            if take > 0 then\n                broadcastToAll(take .. \" replacement card(s) drawn from the reserve.\", {0.72,0.72,1})\n            end\n            if take < short then\n                broadcastToAll(\"Reserve is empty \u2014 \" .. (short - take) ..\n                               \" room(s) will have no card.\", {1,0.7,0.3})\n            end\n        end\n    end\n\n    Wait.time(function() shuffleAndDeal(board, drop) end, short > 0 and 2.0 or 0.3)\nend\n\nfunction shuffleAndDeal(board, drop)\n    local deck = nil\n    for _, o in ipairs(getAllObjects()) do\n        local p = o.getPosition()\n        if o.type == \"Deck\" and math.abs(p.x - drop.x) < 4 and math.abs(p.z - drop.z) < 4 then\n            deck = o\n        end\n    end\n    if deck == nil then\n        broadcastToAll(\"Lost track of the Key pool \u2014 nudge the cards together and reshuffle.\", {1,0.6,0.2})\n        return\n    end\n    deck.setName(\"Key Pool\")\n    deck.shuffle()\n    Wait.time(function() dealKeys(deck) end, 1)\nend\n\nfunction dealKeys(deck)\n    local board = findByNick(BOARD_NICK)\n    for i, R in ipairs(ROOMS) do\n        Wait.time(function()\n            if deck == nil or deck.isDestroyed() then return end\n            local p = cellToWorld(board, R.cc, R.cr)\n            local ok, q = pcall(function() return deck.getQuantity() end)\n            local left = (ok and q) or 0\n\n            if left > 1 then\n                deck.takeObject({\n                    position = { p.x, p.y + 1.5, p.z },\n                    rotation = { 0, 180, 180 },\n                    smooth   = true\n                })\n            elseif left == 1 or deck.type == \"Card\" then\n                -- the pile is down to its last card: TTS has turned it back into\n                -- a Card, and takeObject no longer works. Move the card itself.\n                deck.setPositionSmooth({ p.x, p.y + 1.5, p.z })\n                deck.setRotationSmooth({ 0, 180, 180 })\n            end\n        end, i * 0.45)\n    end\n\n    Wait.time(function()\n        local dealt = #roomKeyCards()\n        local found = foundKeyCount()\n        broadcastToAll(dealt .. \" of \" .. #ROOMS .. \" rooms hidden. \" ..\n                       found .. \" of 3 keys found.\", {0.72,0.72,1})\n        if dealt < #ROOMS then\n            broadcastToAll((#ROOMS - dealt) .. \" room(s) have no card.\", {1,0.7,0.3})\n        end\n        if found >= 3 then\n            broadcastToAll(\"All three keys have been found \u2014 the FINAL CHASE begins. \"\n                .. \"Corridors now need a Killer roll too.\", {1,0.3,0.25})\n        end\n    end, #ROOMS * 0.45 + 2.0)\nend\n\nGHOST_VIEW = {}    -- seat colour -> list of {room, card} currently on show\n\nfunction btnPeekKeys(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then return end\n    if not GHOSTS[colour] then\n        broadcastToColor(\"Only the dead see the house for what it is.\", colour, {1,0.45,0.45})\n        return\n    end\n\n    local rows = {}\n    for _, R in ipairs(ROOMS) do\n        local z, what = zoneOf(R.id), \"-\"\n        if z ~= nil then\n            for _, o in ipairs(z.getObjects()) do\n                local ok, t = pcall(function() return o.hasTag(\"KeyCard\") end)\n                if ok and t then what = o.getName() end\n            end\n        end\n        rows[#rows+1] = { room = R.name, card = what }\n    end\n    GHOST_VIEW[colour] = rows\n    buildUI()\nend\n\nfunction closeGhostView(a, b)\n    local colour = clickerColour(a, b)\n    if colour ~= nil then GHOST_VIEW[colour] = nil end\n    buildUI()\nend\n\n-- One panel per viewing ghost, restricted with visibility=\"<colour>\" so it is\n-- drawn on that player's screen only. Chat was unreadable at ten rooms.\nfunction ghostPanels()\n    local out = {}\n    for colour, rows in pairs(GHOST_VIEW) do\n        local body = {}\n        for _, r in ipairs(rows) do\n            local isKey = (r.card == \"Key\")\n            body[#body+1] = table.concat({\n              '<HorizontalLayout preferredHeight=\"30\">',\n                '<Text fontSize=\"17\" color=\"#DCE8F2\" alignment=\"MiddleLeft\" preferredWidth=\"150\">',\n                  xesc(r.room), '</Text>',\n                '<Text fontSize=\"17\" color=\"', isKey and \"#E3B44E\" or \"#6E8296\",\n                  '\" alignment=\"MiddleLeft\">', isKey and \"KEY\" or xesc(r.card), '</Text>',\n              '</HorizontalLayout>'\n            })\n        end\n        out[#out+1] = table.concat({\n        '<Panel id=\"ghostView_', colour, '\" visibility=\"', colour,\n        '\" rectAlignment=\"MiddleCenter\" offsetXY=\"0 0\" width=\"330\" height=\"',\n        tostring(96 + #rows * 30), '\" color=\"#101A24FA\" outlineColor=\"#E3B44E\" outline=\"1 1\"',\n        ' allowDragging=\"true\" returnToOriginalPositionWhenReleased=\"false\">',\n          '<VerticalLayout padding=\"14 14 10 12\" spacing=\"2\" childForceExpandHeight=\"false\">',\n            '<Text fontSize=\"16\" color=\"#E3B44E\" alignment=\"MiddleCenter\" preferredHeight=\"24\">WHERE THE KEYS ARE</Text>',\n            table.concat(body),\n            '<Button onClick=\"closeGhostView\" fontSize=\"13\" preferredHeight=\"28\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Close</Button>',\n          '</VerticalLayout>',\n        '</Panel>'})\n    end\n    return table.concat(out)\nend\n\n-- A player declares their own death from the panel. Using the clicker's seat\n-- means no name-to-colour mapping is needed, and Ghost sight keys off the same\n-- seat, so the two always agree.\nfunction btnIDied(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then\n        broadcastToAll(\"Sit in a seat first, then declare.\", {1,0.7,0.3})\n        return\n    end\n    if GHOSTS[colour] then\n        broadcastToColor(\"You are already a ghost.\", colour, {0.6,0.9,1})\n        return\n    end\n    makeGhost(colour)\nend\n\nfunction btnClearGhosts()\n    reviveAll()\nend\n\nfunction makeGhost(colour)\n    GHOSTS[colour] = true\n    buildUI()\n    broadcastToAll(colour .. \" has died and is now a ghost. Their carried items drop \"\n                   .. \"in the room they fell.\", {0.6,0.6,0.6})\n    broadcastToColor(\"You are a ghost.\\n\"\n        .. \"1. Drop everything you carried into the room you died in.\\n\"\n        .. \"2. Take an Allegiance card and 3 ghost cards INTO YOUR HAND \u2014 your hand is \"\n        .. \"private, so only you can see them.\\n\"\n        .. \"3. Press Ghost sight to see where the keys are.\",\n        colour, {0.6,0.9,1})\nend\n\nfunction reviveAll()\n    GHOSTS = {}\n    buildUI()\n    broadcastToAll(\"Ghost list cleared.\", {0.7,0.7,0.7})\nend\n\n--=============================================================\n--  Rounds and the killer\n--=============================================================\nfunction btnEndTurn(a, b)\n    if Turns.enable then\n        Turns.turn_color = Turns.getNextTurnColor()\n    else\n        broadcastToAll(\"Turn order is off. Use 'Start turns' first.\", {1,0.7,0.3})\n    end\nend\n\nfunction btnStartTurns()\n    local seats = seatedColours()\n    if #seats == 0 then\n        broadcastToAll(\"Nobody is seated.\", {1,0.7,0.3})\n        return\n    end\n    Turns.enable = true\n    Turns.type = 2               -- custom order\n    Turns.order = seats\n    Turns.turn_color = seats[1]\n    currentRound = 1\n    broadcastToAll(\"Turn order set: \" .. table.concat(seats, \", \"), {0.72,0.82,0.94})\n    buildUI()\nend\n\n-- Fires when the active seat changes. previousPlayer has just finished a turn.\nfunction onPlayerTurn(player, previousPlayer)\n    if previousPlayer ~= nil and killerSlayer ~= nil\n       and previousPlayer.color == killerSlayer then\n        slayerTurns = slayerTurns + 1\n        if slayerTurns >= 2 then\n            broadcastToAll(\"The killer returns, at FULL Health.\", {1,0.25,0.25})\n            killerSlayer = nil\n            slayerTurns  = 0\n            KILLER_HP    = KILLER_MAX\n        else\n            broadcastToAll(\"The killer stays away for one more of \" ..\n                           killerSlayer .. \"'s turns.\", {0.62,0.62,0.62})\n        end\n    end\n\n    local seats = Turns.order\n    if seats ~= nil and #seats > 0 and player ~= nil and player.color == seats[1] then\n        currentRound = currentRound + 1\n        broadcastToAll(\"Round \" .. currentRound, {1,1,1})\n    end\n    buildUI()\nend\n\nfunction btnKillerDriven(a, b)\n    local colour = clickerColour(a, b)\n    if colour == nil then\n        broadcastToAll(\"Could not tell who drove the killer off.\", {1,0.7,0.3})\n        return\n    end\n    killerSlayer = colour\n    slayerTurns  = 0\n    KILLER_HP    = 0\n    broadcastToAll(colour .. \" drove the killer off. +1 VP. It returns at full Health \"\n                   .. \"once \" .. colour .. \" has played two more turns.\", {0.45,1,0.55})\n    buildUI()\nend\n\n--=============================================================\n--  Controls\n--=============================================================\n\n--=============================================================\n--  Screen UI \u2014 controls panel and the health tracker.\n--  All of it is built here in Lua rather than baked into the save,\n--  so the health rows can follow who is actually seated.\n--=============================================================\nTRACK      = nil     -- ordered list of {id, name, hp}\nnextTrackId = 1\nKILLER_HP  = 8\n\nSEAT_HEX = {\n    White=\"#F2F5F8\", Brown=\"#8B5E3C\", Red=\"#C0392B\", Orange=\"#D4791F\",\n    Yellow=\"#C9A227\", Green=\"#3F8B5B\", Teal=\"#2E8B8B\", Blue=\"#3A6FB0\",\n    Purple=\"#6B5B8C\", Pink=\"#C46A94\", Grey=\"#7A8894\", Black=\"#3A424C\"\n}\nSEAT_ORDER = { \"White\",\"Brown\",\"Red\",\"Orange\",\"Yellow\",\"Green\",\n               \"Teal\",\"Blue\",\"Purple\",\"Pink\",\"Grey\",\"Black\" }\n\nfunction seatedColours()\n    local out = {}\n    for _, p in ipairs(Player.getPlayers()) do\n        if p.seated then out[#out+1] = p.color end\n    end\n    table.sort(out, function(a,b)\n        local ia, ib = 99, 99\n        for i,c in ipairs(SEAT_ORDER) do\n            if c==a then ia=i end\n            if c==b then ib=i end\n        end\n        return ia < ib\n    end)\n    return out\nend\n\nfunction xesc(s)\n    return tostring(s):gsub(\"&\",\"&amp;\"):gsub(\"<\",\"&lt;\"):gsub(\">\",\"&gt;\"):gsub('\"',\"&quot;\")\nend\n\nfunction addTracked(name, hp)\n    TRACK[#TRACK+1] = { id = \"t\" .. nextTrackId, name = name or \"Player\", hp = hp or 5 }\n    nextTrackId = nextTrackId + 1\nend\n\nfunction findTracked(id)\n    for i, t in ipairs(TRACK) do if t.id == id then return t, i end end\n    return nil\nend\n\nfunction seedTrack()\n    TRACK = {}\n    for _, c in ipairs(seatedColours()) do addTracked(c, 5) end\n    if #TRACK == 0 then addTracked(\"Player 1\", 5) end\nend\n\nfunction btnAddPlayer()\n    addTracked(\"Player \" .. (#TRACK + 1), 5)\n    buildUI()\nend\n\nfunction btnAddSeated()\n    local have = {}\n    for _, t in ipairs(TRACK) do have[t.name] = true end\n    local n = 0\n    for _, c in ipairs(seatedColours()) do\n        if not have[c] then addTracked(c, 5); n = n + 1 end\n    end\n    buildUI()\n    broadcastToAll(n .. \" seated player(s) added.\", {0.72,0.82,0.94})\nend\n\nfunction removeTracked(player, value, id)\n    local t, i = findTracked(value)\n    if i then table.remove(TRACK, i) end\n    buildUI()\nend\n\nfunction onNameEdit(player, value, id)\n    local t = findTracked((id or \"\"):gsub(\"^name_\", \"\"))\n    if t then t.name = value end\nend\n\nfunction hpAdjust(player, value, id)\n    local who, delta = tostring(value):match(\"^(.-)|(-?%d+)$\")\n    if who == nil then return end\n    delta = tonumber(delta)\n    if who == \"KILLER\" then\n        KILLER_HP = math.max(0, KILLER_HP + delta)\n        if KILLER_HP == 0 then\n            broadcastToAll(\"The killer is at 0 Health \u2014 use 'Killer driven off'.\", {1,0.5,0.4})\n        end\n    else\n        local t = findTracked(who)\n        if t == nil then return end\n        t.hp = math.max(0, t.hp + delta)\n        if t.hp == 0 then broadcastToAll(t.name .. \" is at 0 Health.\", {0.85,0.4,0.4}) end\n    end\n    buildUI()\nend\n\nfunction hpRow(id, name, hex, value, editable)\n    local label\n    if editable then\n        label = '<InputField id=\"name_' .. id .. '\" text=\"' .. xesc(name) ..\n                '\" onEndEdit=\"onNameEdit\" fontSize=\"13\" textColor=\"#111820\"' ..\n                ' color=\"#E9EEF3\" preferredWidth=\"76\" />'\n    else\n        label = '<Text fontSize=\"14\" color=\"' .. hex ..\n                '\" alignment=\"MiddleLeft\" preferredWidth=\"76\">' .. xesc(name) .. '</Text>'\n    end\n    local kill = editable and\n        ('<Button onClick=\"removeTracked(' .. id .. ')\" fontSize=\"12\" preferredWidth=\"20\" ' ..\n         'color=\"#3A424C\" textColor=\"#B7C4D2\">x</Button>') or\n        '<Text preferredWidth=\"20\"> </Text>'\n    return table.concat({\n      '<HorizontalLayout preferredHeight=\"30\" spacing=\"3\">', label,\n      '<Button onClick=\"hpAdjust(', id, '|-1)\" fontSize=\"16\" preferredWidth=\"26\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">-</Button>',\n      '<Text fontSize=\"16\" color=\"#DCE8F2\" alignment=\"MiddleCenter\" preferredWidth=\"30\">', tostring(value), '</Text>',\n      '<Button onClick=\"hpAdjust(', id, '|1)\" fontSize=\"16\" preferredWidth=\"26\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">+</Button>',\n      kill, '</HorizontalLayout>'\n    })\nend\n\nfunction buildUI()\n    if TRACK == nil then seedTrack() end\n\n    local rows = {}\n    for _, t in ipairs(TRACK) do\n        local hex = SEAT_HEX[t.name] or \"#DCE8F2\"\n        if GHOSTS[t.name] then hex = \"#8FA2B5\" end\n        rows[#rows+1] = hpRow(t.id, t.name, hex, t.hp, true)\n    end\n    rows[#rows+1] = '<Text fontSize=\"11\" color=\"#5A7086\" alignment=\"MiddleCenter\" preferredHeight=\"16\">THE KILLER</Text>'\n    rows[#rows+1] = hpRow(\"KILLER\", \"Killer\", \"#E2695E\", KILLER_HP, false)\n\n    local h = 150 + #TRACK * 33\n\n    local xml = table.concat({\n    '<Panel id=\"kmControls\" rectAlignment=\"UpperLeft\" offsetXY=\"16 -16\" width=\"212\" height=\"332\"',\n    ' color=\"#152232F0\" outlineColor=\"#93A9BE\" outline=\"1 1\"',\n    ' allowDragging=\"true\" returnToOriginalPositionWhenReleased=\"false\">',\n      '<VerticalLayout padding=\"12 12 10 12\" spacing=\"6\" childForceExpandHeight=\"false\">',\n        '<Text fontSize=\"14\" color=\"#8FA2B5\" alignment=\"MiddleCenter\" preferredHeight=\"20\">KILLER MANSION  (drag)</Text>',\n        '<Button onClick=\"btnReshuffleKeys\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Reshuffle keys</Button>',\n        '<Button onClick=\"btnIDied\" fontSize=\"14\" preferredHeight=\"34\" color=\"#5A6B7C\" textColor=\"#E9EEF3\">I died</Button>',\n        '<Button onClick=\"btnPeekKeys\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Ghost sight</Button>',\n        '<Button onClick=\"btnKillerDriven\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">Killer driven off</Button>',\n        '<Button onClick=\"btnEndTurn\" fontSize=\"14\" preferredHeight=\"34\" color=\"#E9EEF3\" textColor=\"#1B2C3E\">End turn</Button>',\n        '<Button onClick=\"btnStartTurns\" fontSize=\"12\" preferredHeight=\"26\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Start turns</Button>',\n        '<Button onClick=\"btnClearGhosts\" fontSize=\"11\" preferredHeight=\"24\" color=\"#8FA2B5\" textColor=\"#0F1924\">Clear ghosts</Button>',\n      '</VerticalLayout>',\n    '</Panel>',\n    '<Panel id=\"kmHealth\" rectAlignment=\"UpperRight\" offsetXY=\"-16 -16\" width=\"236\" height=\"', tostring(h), '\"',\n    ' color=\"#152232F0\" outlineColor=\"#93A9BE\" outline=\"1 1\"',\n    ' allowDragging=\"true\" returnToOriginalPositionWhenReleased=\"false\">',\n      '<VerticalLayout padding=\"10 10 8 10\" spacing=\"3\" childForceExpandHeight=\"false\">',\n        '<Text fontSize=\"13\" color=\"#8FA2B5\" alignment=\"MiddleCenter\" preferredHeight=\"20\">HEALTH  (drag)</Text>',\n        table.concat(rows),\n        '<HorizontalLayout preferredHeight=\"26\" spacing=\"4\">',\n          '<Button onClick=\"btnAddPlayer\" fontSize=\"11\" color=\"#B7C4D2\" textColor=\"#1B2C3E\">Add player</Button>',\n          '<Button onClick=\"btnAddSeated\" fontSize=\"11\" color=\"#8FA2B5\" textColor=\"#0F1924\">Add seated</Button>',\n        '</HorizontalLayout>',\n      '</VerticalLayout>',\n    '</Panel>',\n    ghostPanels()\n    })\n    UI.setXml(xml)\nend\n\nfunction buildButtons()\n    local host = findByNick(CONTROL_NICK)\n    if host == nil then return end\n    host.clearButtons()\n    local defs = {\n        { \"btnReshuffleKeys\", \"Reshuffle keys\",  -1.05 },\n        { \"btnPeekKeys\",      \"Ghost sight\",     -0.35 },\n        { \"btnKillerDriven\",  \"Killer driven off\", 0.35 },\n        { \"btnEndRound\",      \"End round\",        1.05 },\n    }\n    for _, d in ipairs(defs) do\n        host.createButton({\n            click_function = d[1], function_owner = Global, label = d[2],\n            position = { 0, 0.3, d[3] }, width = 1500, height = 500,\n            font_size = 170, color = {0.93,0.95,0.97}, font_color = {0.1,0.13,0.17}\n        })\n    end\n    host.createButton({\n        click_function = \"btnAlign\", function_owner = Global, label = \"Align to board\",\n        position = { 0, 0.3, 1.75 }, width = 1500, height = 400,\n        font_size = 150, color = {0.80,0.84,0.88}, font_color = {0.1,0.13,0.17}\n    })\nend\n\n-- No longer on the panel. Aligning runs automatically on load; these stay\n-- callable from the console (~) if the table ever needs a nudge:\n--   btnAlign()      re-square the board and replace the zones\n--   btnKeyReport()  what is actually sitting in each room\n--   btnDiagnose()   the board's measured size and cell size\nfunction btnAlign() alignZones(false) end\n",
  "LuaScriptState": "",
  "XmlUI": "",
  "ObjectStates": [
@@ -24,7 +24,7 @@
     "posY": 1.0,
     "posZ": 0,
     "rotX": 0,
-    "rotY": 0,
+    "rotY": 180,
     "rotZ": 0,
     "scaleX": 7,
     "scaleY": 1,
@@ -61,7 +61,7 @@
    "LuaScriptState": "",
    "XmlUI": "",
    "CustomImage": {
-    "ImageURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/thornfield-board.png",
+    "ImageURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/thornfield-board-v2.png",
     "ImageSecondaryURL": "",
     "ImageScalar": 1.0,
     "WidthScale": 0.0,
@@ -661,8 +661,8 @@
    ],
    "CustomDeck": {
     "1": {
-     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
      "NumWidth": 5,
      "NumHeight": 5,
      "BackIsHidden": true,
@@ -718,8 +718,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -776,8 +776,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -834,8 +834,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -892,8 +892,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -950,8 +950,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1008,8 +1008,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1066,8 +1066,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1124,8 +1124,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1182,8 +1182,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1240,8 +1240,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1298,8 +1298,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1356,8 +1356,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1414,8 +1414,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1472,8 +1472,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1530,8 +1530,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1588,8 +1588,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1646,8 +1646,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1704,8 +1704,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1762,8 +1762,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1820,8 +1820,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1878,8 +1878,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1936,8 +1936,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -1994,8 +1994,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2052,8 +2052,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2110,8 +2110,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2168,8 +2168,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2226,8 +2226,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2284,8 +2284,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2342,8 +2342,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2400,8 +2400,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2458,8 +2458,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2516,8 +2516,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2574,8 +2574,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2632,8 +2632,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2690,8 +2690,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2748,8 +2748,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2806,8 +2806,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2864,8 +2864,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2922,8 +2922,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -2980,8 +2980,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -3038,8 +3038,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -3096,8 +3096,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -3154,8 +3154,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -3212,8 +3212,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "1": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/draw-back-v2.png",
        "NumWidth": 5,
        "NumHeight": 5,
        "BackIsHidden": true,
@@ -3304,8 +3304,8 @@
    ],
    "CustomDeck": {
     "2": {
-     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
      "NumWidth": 4,
      "NumHeight": 4,
      "BackIsHidden": true,
@@ -3361,8 +3361,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3419,8 +3419,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3477,8 +3477,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3535,8 +3535,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3593,8 +3593,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3651,8 +3651,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3709,8 +3709,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3767,8 +3767,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3825,8 +3825,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3883,8 +3883,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3941,8 +3941,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -3999,8 +3999,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4057,8 +4057,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4115,8 +4115,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4173,8 +4173,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4231,8 +4231,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4289,8 +4289,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4347,8 +4347,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4405,8 +4405,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4463,8 +4463,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4521,8 +4521,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4579,8 +4579,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4637,8 +4637,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4695,8 +4695,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4753,8 +4753,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4811,8 +4811,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4869,8 +4869,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4927,8 +4927,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -4985,8 +4985,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -5043,8 +5043,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "2": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/ghost-back-v2.png",
        "NumWidth": 4,
        "NumHeight": 4,
        "BackIsHidden": true,
@@ -5084,7 +5084,7 @@
    "LuaScript": "",
    "LuaScriptState": "",
    "XmlUI": "",
-   "GUID": "8cb6f6",
+   "GUID": "22247d",
    "Name": "Deck",
    "Transform": {
     "posX": -1.7999999999999998,
@@ -5098,7 +5098,7 @@
     "scaleZ": 0.5
    },
    "Nickname": "Key Deck",
-   "Description": "13 cards",
+   "Description": "12 cards",
    "Hands": false,
    "SidewaysCard": false,
    "DeckIDs": [
@@ -5113,13 +5113,12 @@
     301,
     301,
     301,
-    301,
     301
    ],
    "CustomDeck": {
     "3": {
-     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
      "NumWidth": 2,
      "NumHeight": 1,
      "BackIsHidden": true,
@@ -5175,8 +5174,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5236,8 +5235,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5297,8 +5296,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5358,8 +5357,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5419,8 +5418,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5480,8 +5479,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5541,8 +5540,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5602,8 +5601,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5663,8 +5662,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5724,8 +5723,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5785,8 +5784,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5846,69 +5845,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
-       "NumWidth": 2,
-       "NumHeight": 1,
-       "BackIsHidden": true,
-       "UniqueBack": false,
-       "Type": 0
-      }
-     },
-     "Hands": true,
-     "Tags": [
-      "KeyCard"
-     ]
-    },
-    {
-     "AltLookAngle": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-     },
-     "LayoutGroupSortIndex": 0,
-     "Value": 0,
-     "GMNotes": "",
-     "ColorDiffuse": {
-      "r": 0.713,
-      "g": 0.713,
-      "b": 0.713
-     },
-     "Locked": false,
-     "Grid": true,
-     "Snap": true,
-     "IgnoreFoW": false,
-     "MeasureMovement": false,
-     "DragSelectable": true,
-     "Autoraise": true,
-     "Sticky": true,
-     "Tooltip": true,
-     "GridProjection": false,
-     "HideWhenFaceDown": true,
-     "LuaScript": "",
-     "LuaScriptState": "",
-     "XmlUI": "",
-     "GUID": "22247d",
-     "Name": "Card",
-     "Transform": {
-      "posX": 0,
-      "posY": 2,
-      "posZ": 0,
-      "rotX": 0,
-      "rotY": 180,
-      "rotZ": 180,
-      "scaleX": 0.5,
-      "scaleY": 1,
-      "scaleZ": 0.5
-     },
-     "Nickname": "Not a Key",
-     "Description": "No key here. You find something else instead: draw 1 card from the Draw deck",
-     "CardID": 301,
-     "SidewaysCard": false,
-     "CustomDeck": {
-      "3": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/key-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 1,
        "BackIsHidden": true,
@@ -5951,7 +5889,7 @@
    "LuaScript": "",
    "LuaScriptState": "",
    "XmlUI": "",
-   "GUID": "7921bd",
+   "GUID": "46b4c1",
    "Name": "Deck",
    "Transform": {
     "posX": 1.8000000000000007,
@@ -5977,8 +5915,8 @@
    ],
    "CustomDeck": {
     "4": {
-     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
-     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces-v2.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back-v2.png",
      "NumWidth": 2,
      "NumHeight": 2,
      "BackIsHidden": true,
@@ -5987,6 +5925,64 @@
     }
    },
    "ContainedObjects": [
+    {
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0,
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "GUID": "8cb6f6",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1.0,
+      "scaleY": 1,
+      "scaleZ": 1.0
+     },
+     "Nickname": "Guardian \u2014 Echoes",
+     "Description": "You win if the group meets its VP threshold. Objective: A key is found in the same room twice (+1 VP)",
+     "CardID": 400,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "4": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back-v2.png",
+       "NumWidth": 2,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "Hands": true
+    },
     {
      "AltLookAngle": {
       "x": 0,
@@ -6028,14 +6024,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Guardian \u2014 Echoes",
-     "Description": "You win if the group meets its VP threshold. Objective: A key is found in the same room twice (+1 VP)",
-     "CardID": 400,
+     "Nickname": "Guardian \u2014 Scattered Bones",
+     "Description": "You win if the group meets its VP threshold. Objective: All 3 keys are found in a different rooms (+1 VP)",
+     "CardID": 401,
      "SidewaysCard": false,
      "CustomDeck": {
       "4": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6086,14 +6082,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Guardian \u2014 Scattered Bones",
-     "Description": "You win if the group meets its VP threshold. Objective: All 3 keys are found in a different rooms (+1 VP)",
-     "CardID": 401,
+     "Nickname": "Guardian \u2014 Where I Fell",
+     "Description": "You win if the group meets its VP threshold. Objective: A key must be found in the room where you died (+1 VP)",
+     "CardID": 402,
      "SidewaysCard": false,
      "CustomDeck": {
       "4": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6144,14 +6140,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Guardian \u2014 Where I Fell",
-     "Description": "You win if the group meets its VP threshold. Objective: A key must be found in the room where you died (+1 VP)",
-     "CardID": 402,
+     "Nickname": "Malevolent",
+     "Description": "You win if the group fails to meet its VP threshold.",
+     "CardID": 403,
      "SidewaysCard": false,
      "CustomDeck": {
       "4": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6208,66 +6204,8 @@
      "SidewaysCard": false,
      "CustomDeck": {
       "4": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
-       "NumWidth": 2,
-       "NumHeight": 2,
-       "BackIsHidden": true,
-       "UniqueBack": false,
-       "Type": 0
-      }
-     },
-     "Hands": true
-    },
-    {
-     "AltLookAngle": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-     },
-     "LayoutGroupSortIndex": 0,
-     "Value": 0,
-     "GMNotes": "",
-     "ColorDiffuse": {
-      "r": 0.713,
-      "g": 0.713,
-      "b": 0.713
-     },
-     "Locked": false,
-     "Grid": true,
-     "Snap": true,
-     "IgnoreFoW": false,
-     "MeasureMovement": false,
-     "DragSelectable": true,
-     "Autoraise": true,
-     "Sticky": true,
-     "Tooltip": true,
-     "GridProjection": false,
-     "HideWhenFaceDown": true,
-     "LuaScript": "",
-     "LuaScriptState": "",
-     "XmlUI": "",
-     "GUID": "46b4c1",
-     "Name": "Card",
-     "Transform": {
-      "posX": 0,
-      "posY": 2,
-      "posZ": 0,
-      "rotX": 0,
-      "rotY": 180,
-      "rotZ": 180,
-      "scaleX": 1.0,
-      "scaleY": 1,
-      "scaleZ": 1.0
-     },
-     "Nickname": "Malevolent",
-     "Description": "You win if the group fails to meet its VP threshold.",
-     "CardID": 403,
-     "SidewaysCard": false,
-     "CustomDeck": {
-      "4": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/allegiance-back-v2.png",
        "NumWidth": 2,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6307,7 +6245,7 @@
    "LuaScript": "",
    "LuaScriptState": "",
    "XmlUI": "",
-   "GUID": "202101",
+   "GUID": "19d352",
    "Name": "Deck",
    "Transform": {
     "posX": 5.4,
@@ -6333,8 +6271,8 @@
    ],
    "CustomDeck": {
     "5": {
-     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
-     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces-v2.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back-v2.png",
      "NumWidth": 3,
      "NumHeight": 2,
      "BackIsHidden": true,
@@ -6343,6 +6281,64 @@
     }
    },
    "ContainedObjects": [
+    {
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0,
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "GUID": "7921bd",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1.0,
+      "scaleY": 1,
+      "scaleZ": 1.0
+     },
+     "Nickname": "Athlete",
+     "Description": "Bravery - High (+2 Fight) | Wits - Low (no bonus) | Health - High (7)",
+     "CardID": 500,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "5": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back-v2.png",
+       "NumWidth": 3,
+       "NumHeight": 2,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "Hands": true
+    },
     {
      "AltLookAngle": {
       "x": 0,
@@ -6384,14 +6380,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Athlete",
-     "Description": "Bravery - High (+2 Fight) | Wits - Low (no bonus) | Health - High (7)",
-     "CardID": 500,
+     "Nickname": "Caretaker",
+     "Description": "Bravery - Low (no bonus) | Wits - High (+2 Search/Run) | Health - High (7)",
+     "CardID": 501,
      "SidewaysCard": false,
      "CustomDeck": {
       "5": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6442,14 +6438,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Caretaker",
-     "Description": "Bravery - Low (no bonus) | Wits - High (+2 Search/Run) | Health - High (7)",
-     "CardID": 501,
+     "Nickname": "Detective",
+     "Description": "Bravery - High (+2 Fight) | Wits - High (+2 Search/Run) | Health - Low (5)",
+     "CardID": 502,
      "SidewaysCard": false,
      "CustomDeck": {
       "5": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6500,14 +6496,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Detective",
-     "Description": "Bravery - High (+2 Fight) | Wits - High (+2 Search/Run) | Health - Low (5)",
-     "CardID": 502,
+     "Nickname": "Movie Star",
+     "Description": "Bravery - Medium (+1 Fight) | Wits - Medium (+1 Search/Run) | Health - High (7)",
+     "CardID": 503,
      "SidewaysCard": false,
      "CustomDeck": {
       "5": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6558,72 +6554,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Movie Star",
-     "Description": "Bravery - Medium (+1 Fight) | Wits - Medium (+1 Search/Run) | Health - High (7)",
-     "CardID": 503,
-     "SidewaysCard": false,
-     "CustomDeck": {
-      "5": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
-       "NumWidth": 3,
-       "NumHeight": 2,
-       "BackIsHidden": true,
-       "UniqueBack": false,
-       "Type": 0
-      }
-     },
-     "Hands": true
-    },
-    {
-     "AltLookAngle": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-     },
-     "LayoutGroupSortIndex": 0,
-     "Value": 0,
-     "GMNotes": "",
-     "ColorDiffuse": {
-      "r": 0.713,
-      "g": 0.713,
-      "b": 0.713
-     },
-     "Locked": false,
-     "Grid": true,
-     "Snap": true,
-     "IgnoreFoW": false,
-     "MeasureMovement": false,
-     "DragSelectable": true,
-     "Autoraise": true,
-     "Sticky": true,
-     "Tooltip": true,
-     "GridProjection": false,
-     "HideWhenFaceDown": true,
-     "LuaScript": "",
-     "LuaScriptState": "",
-     "XmlUI": "",
-     "GUID": "19d352",
-     "Name": "Card",
-     "Transform": {
-      "posX": 0,
-      "posY": 2,
-      "posZ": 0,
-      "rotX": 0,
-      "rotY": 180,
-      "rotZ": 180,
-      "scaleX": 1.0,
-      "scaleY": 1,
-      "scaleZ": 1.0
-     },
      "Nickname": "Priest",
      "Description": "Bravery High - (+2 Fight) | Wits - Medium (+1 Search/Run) | Health - Medium (6)",
      "CardID": 504,
      "SidewaysCard": false,
      "CustomDeck": {
       "5": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/character-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 2,
        "BackIsHidden": true,
@@ -6663,7 +6601,7 @@
    "LuaScript": "",
    "LuaScriptState": "",
    "XmlUI": "",
-   "GUID": "c3943e",
+   "GUID": "83ac30",
    "Name": "Deck",
    "Transform": {
     "posX": 9.0,
@@ -6693,8 +6631,8 @@
    ],
    "CustomDeck": {
     "6": {
-     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+     "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+     "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
      "NumWidth": 3,
      "NumHeight": 3,
      "BackIsHidden": true,
@@ -6703,6 +6641,64 @@
     }
    },
    "ContainedObjects": [
+    {
+     "AltLookAngle": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+     },
+     "LayoutGroupSortIndex": 0,
+     "Value": 0,
+     "GMNotes": "",
+     "ColorDiffuse": {
+      "r": 0.713,
+      "g": 0.713,
+      "b": 0.713
+     },
+     "Locked": false,
+     "Grid": true,
+     "Snap": true,
+     "IgnoreFoW": false,
+     "MeasureMovement": false,
+     "DragSelectable": true,
+     "Autoraise": true,
+     "Sticky": true,
+     "Tooltip": true,
+     "GridProjection": false,
+     "HideWhenFaceDown": true,
+     "LuaScript": "",
+     "LuaScriptState": "",
+     "XmlUI": "",
+     "GUID": "202101",
+     "Name": "Card",
+     "Transform": {
+      "posX": 0,
+      "posY": 2,
+      "posZ": 0,
+      "rotX": 0,
+      "rotY": 180,
+      "rotZ": 180,
+      "scaleX": 1.0,
+      "scaleY": 1,
+      "scaleZ": 1.0
+     },
+     "Nickname": "Chainsaw",
+     "Description": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 10",
+     "CardID": 600,
+     "SidewaysCard": false,
+     "CustomDeck": {
+      "6": {
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
+       "NumWidth": 3,
+       "NumHeight": 3,
+       "BackIsHidden": true,
+       "UniqueBack": false,
+       "Type": 0
+      }
+     },
+     "Hands": true
+    },
     {
      "AltLookAngle": {
       "x": 0,
@@ -6744,14 +6740,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Chainsaw",
-     "Description": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 10",
-     "CardID": 600,
+     "Nickname": "Clown",
+     "Description": "Terrifying | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "CardID": 601,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -6802,14 +6798,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Clown",
-     "Description": "Terrifying | Difficulty - Medium (Appears on 6-10) | Health - 8",
-     "CardID": 601,
+     "Nickname": "El Cucuy",
+     "Description": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
+     "CardID": 602,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -6860,14 +6856,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "El Cucuy",
-     "Description": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
-     "CardID": 602,
+     "Nickname": "Killer Doll",
+     "Description": "Very Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "CardID": 603,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -6918,14 +6914,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Killer Doll",
-     "Description": "Very Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
-     "CardID": 603,
+     "Nickname": "Serial Killer",
+     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
+     "CardID": 604,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -6976,14 +6972,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Serial Killer",
+     "Nickname": "Trench Coat Killer",
      "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
-     "CardID": 604,
+     "CardID": 605,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -7034,14 +7030,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Trench Coat Killer",
-     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 8",
-     "CardID": 605,
+     "Nickname": "Vampire",
+     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 10",
+     "CardID": 606,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -7092,14 +7088,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Vampire",
-     "Description": "Scary | Difficulty - Medium (Appears on 6-10) | Health - 10",
-     "CardID": 606,
+     "Nickname": "Werewolf",
+     "Description": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
+     "CardID": 607,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
@@ -7150,72 +7146,14 @@
       "scaleY": 1,
       "scaleZ": 1.0
      },
-     "Nickname": "Werewolf",
-     "Description": "Terrifying | Difficulty - High (Appears on 5-10) | Health - 8",
-     "CardID": 607,
-     "SidewaysCard": false,
-     "CustomDeck": {
-      "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
-       "NumWidth": 3,
-       "NumHeight": 3,
-       "BackIsHidden": true,
-       "UniqueBack": false,
-       "Type": 0
-      }
-     },
-     "Hands": true
-    },
-    {
-     "AltLookAngle": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-     },
-     "LayoutGroupSortIndex": 0,
-     "Value": 0,
-     "GMNotes": "",
-     "ColorDiffuse": {
-      "r": 0.713,
-      "g": 0.713,
-      "b": 0.713
-     },
-     "Locked": false,
-     "Grid": true,
-     "Snap": true,
-     "IgnoreFoW": false,
-     "MeasureMovement": false,
-     "DragSelectable": true,
-     "Autoraise": true,
-     "Sticky": true,
-     "Tooltip": true,
-     "GridProjection": false,
-     "HideWhenFaceDown": true,
-     "LuaScript": "",
-     "LuaScriptState": "",
-     "XmlUI": "",
-     "GUID": "83ac30",
-     "Name": "Card",
-     "Transform": {
-      "posX": 0,
-      "posY": 2,
-      "posZ": 0,
-      "rotX": 0,
-      "rotY": 180,
-      "rotZ": 180,
-      "scaleX": 1.0,
-      "scaleY": 1,
-      "scaleZ": 1.0
-     },
      "Nickname": "Zombie",
      "Description": "Terrifying | Difficulty - Low (Appears on 7-10) | Health - 6",
      "CardID": 608,
      "SidewaysCard": false,
      "CustomDeck": {
       "6": {
-       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces.png",
-       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back.png",
+       "FaceURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-faces-v2.png",
+       "BackURL": "https://raw.githubusercontent.com/fkaghost/haunted/main/killer-back-v2.png",
        "NumWidth": 3,
        "NumHeight": 3,
        "BackIsHidden": true,
