@@ -56,9 +56,9 @@ function onLoad(saved)
             currentRound = s.currentRound or 1
             killerSlayer = s.killerSlayer
             slayerTurns  = s.slayerTurns or 0
-            HEALTH       = s.HEALTH or {}
+            TRACK        = s.TRACK
+            nextTrackId  = s.nextTrackId or 1
             KILLER_HP    = s.KILLER_HP or 8
-            KILLER_MAX   = s.KILLER_MAX or 8
         end
     end
     Wait.time(function()
@@ -83,7 +83,7 @@ end
 function onSave()
     return JSON.encode({ zoneGUID=zoneGUID, GHOSTS=GHOSTS,
                          currentRound=currentRound, killerSlayer=killerSlayer, slayerTurns=slayerTurns,
-                         HEALTH=HEALTH, KILLER_HP=KILLER_HP, KILLER_MAX=KILLER_MAX })
+                         TRACK=TRACK, nextTrackId=nextTrackId, KILLER_HP=KILLER_HP })
 end
 
 function findByNick(nick)
@@ -315,66 +315,108 @@ end
 --=============================================================
 --  Keys — gather all ten, reshuffle, deal one face-down per room
 --=============================================================
-function keyCardsInPlay()
-    local found = {}
-    for _, R in ipairs(ROOMS) do
-        local z = zoneOf(R.id)
-        if z then
-            for _, o in ipairs(z.getObjects()) do
-                if o.hasTag("KeyCard") then found[#found+1] = o end
+KEY_PILE_NICK = "Key Deck"
+
+-- Every Key Card in the scene: loose ones sitting in rooms, plus the reserve
+-- pile. The pile is just whatever did not fit on the board, so it drains from
+-- 3 spares to 0 as keys are collected, with no bookkeeping.
+-- Cards sitting in the Foyer are collected Keys and are left alone. The Foyer
+-- is the found-keys area: it is the door you are unlocking, and it is never
+-- dealt into, so nothing there is part of the hidden layout.
+function foyerGUIDs()
+    local held, z = {}, zoneOf(FOYER.id)
+    if z ~= nil then
+        for _, o in ipairs(z.getObjects()) do held[o.getGUID()] = true end
+    end
+    return held
+end
+
+function allKeyObjects()
+    local out, safe = {}, foyerGUIDs()
+    for _, o in ipairs(getAllObjects()) do
+        if not safe[o.getGUID()] then
+            local ok, tagged = pcall(function() return o.hasTag("KeyCard") end)
+            if ok and tagged then
+                out[#out+1] = o
+            elseif o.type == "Deck" and o.getName() == KEY_PILE_NICK then
+                out[#out+1] = o
             end
         end
     end
-    return found
+    return out
+end
+
+function foundKeyCount()
+    local n, z = 0, zoneOf(FOYER.id)
+    if z ~= nil then
+        for _, o in ipairs(z.getObjects()) do
+            local ok, t = pcall(function() return o.hasTag("KeyCard") end)
+            if ok and t and o.getName() == "Key" then n = n + 1 end
+        end
+    end
+    return n
 end
 
 function btnReshuffleKeys()
     local board = findByNick(BOARD_NICK)
     if board == nil then broadcastToAll("Board not found.", {1,0.4,0.3}) return end
 
-    local cards = keyCardsInPlay()
-    if #cards == 0 then
-        broadcastToAll("No cards tagged KeyCard are sitting in the rooms.", {1,0.7,0.3})
+    local objs = allKeyObjects()
+    if #objs == 0 then
+        broadcastToAll("No Key Cards found. They must be tagged KeyCard.", {1,0.7,0.3})
         return
     end
 
     broadcastToAll("The house rearranges itself...", {0.72,0.72,1})
 
-    -- stack them all on one spot so they merge into a deck
-    local drop = cellToWorld(board, FOYER.cc, FOYER.cr)
-    drop.y = drop.y + 3
-    for i, c in ipairs(cards) do
-        c.setLock(false)
-        c.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })
-        c.setRotationSmooth({ 0, 180, 180 })
+    -- stack everything on one spot so it merges into a single deck
+    local bb = board.getBounds()
+    local drop = { x = bb.center.x - bb.size.x / 2 - 4,
+                   y = bb.center.y + bb.size.y / 2 + 3,
+                   z = bb.center.z }
+    for i, o in ipairs(objs) do
+        o.setLock(false)
+        o.setPositionSmooth({ drop.x, drop.y + i * 0.3, drop.z })
+        o.setRotationSmooth({ 0, 180, 180 })
     end
 
-    Wait.time(function() collectAndDeal(drop, #cards) end, 2.5)
+    Wait.time(function() collectAndDeal(drop) end, 2.5)
 end
 
-function collectAndDeal(drop, expected)
-    local deck = nil
+function collectAndDeal(drop)
+    local deck, loose = nil, 0
     for _, o in ipairs(getAllObjects()) do
-        if o.type == "Deck" and o.hasTag("KeyCard") then
-            local p = o.getPosition()
-            if math.abs(p.x - drop.x) < 3 and math.abs(p.z - drop.z) < 3 then deck = o end
+        local p = o.getPosition()
+        if math.abs(p.x - drop.x) < 4 and math.abs(p.z - drop.z) < 4 then
+            if o.type == "Deck" then deck = o
+            elseif o.type == "Card" then loose = loose + 1 end
         end
     end
 
     if deck == nil then
-        broadcastToAll("The key cards did not merge into a deck. Nudge them together and reshuffle.", {1,0.6,0.2})
+        broadcastToAll("The Key Cards did not merge into a deck. Nudge them together and reshuffle.", {1,0.6,0.2})
         return
     end
+    if loose > 0 then
+        broadcastToAll(loose .. " Key Card(s) did not join the pile — check the Foyer.", {1,0.7,0.3})
+    end
 
+    deck.setName(KEY_PILE_NICK)
     deck.shuffle()
     Wait.time(function() dealKeys(deck) end, 1)
 end
 
 function dealKeys(deck)
     local board = findByNick(BOARD_NICK)
+    local held = deck.getQuantity()
+    if held < #ROOMS then
+        broadcastToAll("Only " .. held .. " Key Cards for " .. #ROOMS ..
+                       " rooms — some rooms will be empty.", {1,0.7,0.3})
+    end
+
     for i, R in ipairs(ROOMS) do
         Wait.time(function()
-            if deck ~= nil and not deck.isDestroyed() then
+            if deck ~= nil and not deck.isDestroyed() and deck.getQuantity() > 0 then
                 local p = cellToWorld(board, R.cc, R.cr)
                 deck.takeObject({
                     position = { p.x, p.y + 1.5, p.z },
@@ -384,9 +426,22 @@ function dealKeys(deck)
             end
         end, i * 0.25)
     end
+
     Wait.time(function()
-        broadcastToAll("Ten keys hidden. Nobody knows where.", {0.72,0.72,1})
-    end, #ROOMS * 0.25 + 0.5)
+        local left = 0
+        local d = findByNick(KEY_PILE_NICK)
+        if d ~= nil and not d.isDestroyed() then
+            local ok, q = pcall(function() return d.getQuantity() end)
+            left = (ok and q and q > 0) and q or 0
+        end
+        local found = foundKeyCount()
+        broadcastToAll(#ROOMS .. " rooms dealt. " .. left .. " spare in reserve. " ..
+                       found .. " of 3 keys found.", {0.72,0.72,1})
+        if found >= 3 then
+            broadcastToAll("All three keys are in the Foyer — the FINAL CHASE begins. "
+                .. "Corridors now need a Killer roll too.", {1,0.3,0.25})
+        end
+    end, #ROOMS * 0.25 + 0.8)
 end
 
 --=============================================================
@@ -412,12 +467,32 @@ function btnPeekKeys(a, b)
     broadcastToColor(table.concat(lines, "\n"), colour, {0.6,0.9,1})
 end
 
+-- A player declares their own death from the panel. Using the clicker's seat
+-- means no name-to-colour mapping is needed, and Ghost sight keys off the same
+-- seat, so the two always agree.
+function btnIDied(a, b)
+    local colour = clickerColour(a, b)
+    if colour == nil then
+        broadcastToAll("Sit in a seat first, then declare.", {1,0.7,0.3})
+        return
+    end
+    if GHOSTS[colour] then
+        broadcastToColor("You are already a ghost.", colour, {0.6,0.9,1})
+        return
+    end
+    makeGhost(colour)
+end
+
+function btnClearGhosts()
+    reviveAll()
+end
+
 function makeGhost(colour)
     GHOSTS[colour] = true
     buildUI()
-    broadcastToAll(colour .. " has died.", {0.6,0.6,0.6})
-    broadcastToColor("You are a ghost. Draw an Allegiance card and a secret objective, then use Ghost sight.",
-                     colour, {0.6,0.9,1})
+    broadcastToAll(colour .. " has died and is now a ghost.", {0.6,0.6,0.6})
+    broadcastToColor("You are a ghost. Take an Allegiance card, drop everything you carried, "
+        .. "then press Ghost sight — only you will see the result.", colour, {0.6,0.9,1})
 end
 
 function reviveAll()
@@ -499,127 +574,170 @@ end
 --  All of it is built here in Lua rather than baked into the save,
 --  so the health rows can follow who is actually seated.
 --=============================================================
-HEALTH      = {}          -- seat colour -> current health
-KILLER_HP   = 8
-KILLER_MAX  = 8
-MAXES       = { 6, 8, 10 }
-
-SEAT_ORDER = { "White","Brown","Red","Orange","Yellow","Green",
-               "Teal","Blue","Purple","Pink","Grey","Black" }
+TRACK      = nil     -- ordered list of {id, name, hp}
+nextTrackId = 1
+KILLER_HP  = 8
 
 SEAT_HEX = {
     White="#F2F5F8", Brown="#8B5E3C", Red="#C0392B", Orange="#D4791F",
     Yellow="#C9A227", Green="#3F8B5B", Teal="#2E8B8B", Blue="#3A6FB0",
     Purple="#6B5B8C", Pink="#C46A94", Grey="#7A8894", Black="#3A424C"
 }
+SEAT_ORDER = { "White","Brown","Red","Orange","Yellow","Green",
+               "Teal","Blue","Purple","Pink","Grey","Black" }
 
 function seatedColours()
     local out = {}
     for _, p in ipairs(Player.getPlayers()) do
         if p.seated then out[#out+1] = p.color end
     end
-    table.sort(out, function(a, b)
+    table.sort(out, function(a,b)
         local ia, ib = 99, 99
-        for i, c in ipairs(SEAT_ORDER) do
-            if c == a then ia = i end
-            if c == b then ib = i end
+        for i,c in ipairs(SEAT_ORDER) do
+            if c==a then ia=i end
+            if c==b then ib=i end
         end
         return ia < ib
     end)
     return out
 end
 
-function esc(s) return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;") end
-
-function hpRow(label, hex, value, tag, extra)
-    return table.concat({
-      '<HorizontalLayout preferredHeight="30" spacing="3">',
-        '<Text fontSize="13" color="', hex, '" alignment="MiddleLeft" preferredWidth="66">', esc(label), '</Text>',
-        '<Button onClick="hpAdjust(', tag, '|-1)" fontSize="16" preferredWidth="26" color="#E9EEF3" textColor="#1B2C3E">-</Button>',
-        '<Text fontSize="16" color="#DCE8F2" alignment="MiddleCenter" preferredWidth="34">', tostring(value), '</Text>',
-        '<Button onClick="hpAdjust(', tag, '|1)" fontSize="16" preferredWidth="26" color="#E9EEF3" textColor="#1B2C3E">+</Button>',
-        extra or '',
-      '</HorizontalLayout>'
-    })
+function xesc(s)
+    return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;")
 end
 
-function buildUI()
-    local seats = seatedColours()
-    local rows = {}
+function addTracked(name, hp)
+    TRACK[#TRACK+1] = { id = "t" .. nextTrackId, name = name or "Player", hp = hp or 5 }
+    nextTrackId = nextTrackId + 1
+end
 
-    for _, c in ipairs(seats) do
-        if HEALTH[c] == nil then HEALTH[c] = 5 end
-        local dead = GHOSTS[c] and "  (ghost)" or ""
-        rows[#rows+1] = hpRow(c .. dead, SEAT_HEX[c] or "#DCE8F2", HEALTH[c], c)
+function findTracked(id)
+    for i, t in ipairs(TRACK) do if t.id == id then return t, i end end
+    return nil
+end
+
+function seedTrack()
+    TRACK = {}
+    for _, c in ipairs(seatedColours()) do addTracked(c, 5) end
+    if #TRACK == 0 then addTracked("Player 1", 5) end
+end
+
+function btnAddPlayer()
+    addTracked("Player " .. (#TRACK + 1), 5)
+    buildUI()
+end
+
+function btnAddSeated()
+    local have = {}
+    for _, t in ipairs(TRACK) do have[t.name] = true end
+    local n = 0
+    for _, c in ipairs(seatedColours()) do
+        if not have[c] then addTracked(c, 5); n = n + 1 end
     end
-    if #seats == 0 then
-        rows[#rows+1] = '<Text fontSize="12" color="#8FA2B5" alignment="MiddleCenter" preferredHeight="40">Sit in a seat, then press Refresh seats</Text>'
-    end
+    buildUI()
+    broadcastToAll(n .. " seated player(s) added.", {0.72,0.82,0.94})
+end
 
-    rows[#rows+1] = '<Text fontSize="11" color="#5A7086" alignment="MiddleCenter" preferredHeight="16">THE KILLER</Text>'
-    rows[#rows+1] = hpRow("Killer", "#C0392B", KILLER_HP .. "/" .. KILLER_MAX, "KILLER",
-        '<Button onClick="cycleKillerMax" fontSize="10" preferredWidth="34" color="#8FA2B5" textColor="#0F1924">max</Button>')
+function removeTracked(player, value, id)
+    local t, i = findTracked(value)
+    if i then table.remove(TRACK, i) end
+    buildUI()
+end
 
-    local panelH = 108 + math.max(1, #seats) * 33
-
-    local xml = table.concat({
-    '<Panel id="hauntedControls" rectAlignment="UpperLeft" offsetXY="16 -16" width="212" height="372" color="#152232F0" outlineColor="#93A9BE" outline="1 1">',
-      '<VerticalLayout padding="12 12 10 12" spacing="6" childForceExpandHeight="false">',
-        '<Text fontSize="15" color="#DCE8F2" alignment="MiddleCenter" preferredHeight="24">KILLER MANSION</Text>',
-        '<Button onClick="btnReshuffleKeys" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">Reshuffle keys</Button>',
-        '<Button onClick="btnPeekKeys" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">Ghost sight</Button>',
-        '<Button onClick="btnKillerDriven" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">Killer driven off</Button>',
-        '<Button onClick="btnEndTurn" fontSize="14" preferredHeight="36" color="#E9EEF3" textColor="#1B2C3E">End turn</Button>',
-        '<Button onClick="btnStartTurns" fontSize="12" preferredHeight="28" color="#B7C4D2" textColor="#1B2C3E">Start turns</Button>',
-        '<Button onClick="btnAlign" fontSize="13" preferredHeight="32" color="#B7C4D2" textColor="#1B2C3E">Align to board</Button>',
-        '<Button onClick="btnDiagnose" fontSize="13" preferredHeight="30" color="#8FA2B5" textColor="#0F1924">Board report</Button>',
-      '</VerticalLayout>',
-    '</Panel>',
-    '<Panel id="hauntedHealth" rectAlignment="UpperRight" offsetXY="-16 -16" width="228" height="', tostring(panelH), '" color="#152232F0" outlineColor="#93A9BE" outline="1 1">',
-      '<VerticalLayout padding="10 10 8 10" spacing="3" childForceExpandHeight="false">',
-        '<Text fontSize="14" color="#DCE8F2" alignment="MiddleCenter" preferredHeight="22">HEALTH</Text>',
-        table.concat(rows),
-        '<Button onClick="btnRefreshSeats" fontSize="11" preferredHeight="24" color="#8FA2B5" textColor="#0F1924">Refresh seats</Button>',
-      '</VerticalLayout>',
-    '</Panel>'
-    })
-
-    UI.setXml(xml)
+function onNameEdit(player, value, id)
+    local t = findTracked((id or ""):gsub("^name_", ""))
+    if t then t.name = value end
 end
 
 function hpAdjust(player, value, id)
-    local who, delta = value:match("^(.-)|(-?%d+)$")
+    local who, delta = tostring(value):match("^(.-)|(-?%d+)$")
     if who == nil then return end
     delta = tonumber(delta)
     if who == "KILLER" then
-        KILLER_HP = math.max(0, math.min(KILLER_MAX, KILLER_HP + delta))
+        KILLER_HP = math.max(0, KILLER_HP + delta)
         if KILLER_HP == 0 then
             broadcastToAll("The killer is at 0 Health — use 'Killer driven off'.", {1,0.5,0.4})
         end
     else
-        HEALTH[who] = math.max(0, (HEALTH[who] or 5) + delta)
-        if HEALTH[who] == 0 then
-            broadcastToAll(who .. " is at 0 Health.", {0.85,0.4,0.4})
-        end
+        local t = findTracked(who)
+        if t == nil then return end
+        t.hp = math.max(0, t.hp + delta)
+        if t.hp == 0 then broadcastToAll(t.name .. " is at 0 Health.", {0.85,0.4,0.4}) end
     end
     buildUI()
 end
 
-function cycleKillerMax()
-    local i = 1
-    for n, v in ipairs(MAXES) do if v == KILLER_MAX then i = n end end
-    KILLER_MAX = MAXES[(i % #MAXES) + 1]
-    KILLER_HP = KILLER_MAX
-    broadcastToAll("Killer set to " .. KILLER_MAX .. " Health.", {0.85,0.55,0.5})
-    buildUI()
+function hpRow(id, name, hex, value, editable)
+    local label
+    if editable then
+        label = '<InputField id="name_' .. id .. '" text="' .. xesc(name) ..
+                '" onEndEdit="onNameEdit" fontSize="13" textColor="' .. hex ..
+                '" preferredWidth="76" />'
+    else
+        label = '<Text fontSize="14" color="' .. hex ..
+                '" alignment="MiddleLeft" preferredWidth="76">' .. xesc(name) .. '</Text>'
+    end
+    local kill = editable and
+        ('<Button onClick="removeTracked(' .. id .. ')" fontSize="12" preferredWidth="20" ' ..
+         'color="#3A424C" textColor="#B7C4D2">x</Button>') or
+        '<Text preferredWidth="20"> </Text>'
+    return table.concat({
+      '<HorizontalLayout preferredHeight="30" spacing="3">', label,
+      '<Button onClick="hpAdjust(', id, '|-1)" fontSize="16" preferredWidth="26" color="#E9EEF3" textColor="#1B2C3E">-</Button>',
+      '<Text fontSize="16" color="#DCE8F2" alignment="MiddleCenter" preferredWidth="30">', tostring(value), '</Text>',
+      '<Button onClick="hpAdjust(', id, '|1)" fontSize="16" preferredWidth="26" color="#E9EEF3" textColor="#1B2C3E">+</Button>',
+      kill, '</HorizontalLayout>'
+    })
 end
 
-function btnRefreshSeats()
-    buildUI()
-    broadcastToAll(#seatedColours() .. " players seated.", {0.72,0.82,0.94})
-end
+function buildUI()
+    if TRACK == nil then seedTrack() end
 
-function onPlayerChangeColor() Wait.time(buildUI, 0.4) end
+    local rows = {}
+    for _, t in ipairs(TRACK) do
+        local hex = SEAT_HEX[t.name] or "#DCE8F2"
+        if GHOSTS[t.name] then hex = "#8FA2B5" end
+        rows[#rows+1] = hpRow(t.id, t.name, hex, t.hp, true)
+    end
+    rows[#rows+1] = '<Text fontSize="11" color="#5A7086" alignment="MiddleCenter" preferredHeight="16">THE KILLER</Text>'
+    rows[#rows+1] = hpRow("KILLER", "Killer", "#E2695E", KILLER_HP, false)
+
+    local h = 150 + #TRACK * 33
+
+    local xml = table.concat({
+    '<Panel id="kmControls" rectAlignment="UpperLeft" offsetXY="16 -16" width="212" height="410"',
+    ' color="#152232F0" outlineColor="#93A9BE" outline="1 1"',
+    ' allowDragging="true" returnToOriginalPositionWhenReleased="false">',
+      '<VerticalLayout padding="12 12 10 12" spacing="6" childForceExpandHeight="false">',
+        '<Text fontSize="14" color="#8FA2B5" alignment="MiddleCenter" preferredHeight="20">KILLER MANSION  (drag)</Text>',
+        '<Button onClick="btnReshuffleKeys" fontSize="14" preferredHeight="34" color="#E9EEF3" textColor="#1B2C3E">Reshuffle keys</Button>',
+        '<Button onClick="btnIDied" fontSize="14" preferredHeight="34" color="#5A6B7C" textColor="#E9EEF3">I died</Button>',
+        '<Button onClick="btnPeekKeys" fontSize="14" preferredHeight="34" color="#E9EEF3" textColor="#1B2C3E">Ghost sight</Button>',
+        '<Button onClick="btnKillerDriven" fontSize="14" preferredHeight="34" color="#E9EEF3" textColor="#1B2C3E">Killer driven off</Button>',
+        '<Button onClick="btnEndTurn" fontSize="14" preferredHeight="34" color="#E9EEF3" textColor="#1B2C3E">End turn</Button>',
+        '<Button onClick="btnStartTurns" fontSize="12" preferredHeight="26" color="#B7C4D2" textColor="#1B2C3E">Start turns</Button>',
+        '<Button onClick="btnAlign" fontSize="12" preferredHeight="26" color="#B7C4D2" textColor="#1B2C3E">Align to board</Button>',
+        '<HorizontalLayout preferredHeight="24" spacing="4">',
+          '<Button onClick="btnClearGhosts" fontSize="11" color="#8FA2B5" textColor="#0F1924">Clear ghosts</Button>',
+          '<Button onClick="btnDiagnose" fontSize="11" color="#8FA2B5" textColor="#0F1924">Board report</Button>',
+        '</HorizontalLayout>',
+      '</VerticalLayout>',
+    '</Panel>',
+    '<Panel id="kmHealth" rectAlignment="UpperRight" offsetXY="-16 -16" width="236" height="', tostring(h), '"',
+    ' color="#152232F0" outlineColor="#93A9BE" outline="1 1"',
+    ' allowDragging="true" returnToOriginalPositionWhenReleased="false">',
+      '<VerticalLayout padding="10 10 8 10" spacing="3" childForceExpandHeight="false">',
+        '<Text fontSize="13" color="#8FA2B5" alignment="MiddleCenter" preferredHeight="20">HEALTH  (drag)</Text>',
+        table.concat(rows),
+        '<HorizontalLayout preferredHeight="26" spacing="4">',
+          '<Button onClick="btnAddPlayer" fontSize="11" color="#B7C4D2" textColor="#1B2C3E">Add player</Button>',
+          '<Button onClick="btnAddSeated" fontSize="11" color="#8FA2B5" textColor="#0F1924">Add seated</Button>',
+        '</HorizontalLayout>',
+      '</VerticalLayout>',
+    '</Panel>'
+    })
+    UI.setXml(xml)
+end
 
 function buildButtons()
     local host = findByNick(CONTROL_NICK)
